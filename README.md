@@ -33,3 +33,30 @@ distance calculation.
 ```bash
 python -m pytest -q
 ```
+
+## HPC validation on a `.npy` cube
+
+Install into a fresh virtual environment, then process a small time window
+before submitting a full production run:
+
+```bash
+git clone https://github.com/kjwtang/STEP_UPGRADE.git
+cd STEP_UPGRADE
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements-hpc.txt
+python -m pip install -e .
+
+python scripts/run_npy_validation.py /path/to/precip.npy \
+  --output-dir results/smoke_24h --start 0 --stop 24 \
+  --threshold 0.6 --bridge-radius 1 --min-size 4 \
+  --workers "${SLURM_CPUS_PER_TASK:-1}" --tau 0.35 --max-displacement 20
+```
+
+The initial validator expects a `(time, y, x)` NumPy array. It writes
+identified and tracked rasters (`.npy`), object properties (`objects.csv`),
+track edges (`edges.csv`), and the exact run configuration (`run_settings.json`).
+
+`scripts/run_validation.slurm` is a Slurm job template for the same smoke
+test. Edit its resource directives and input path before submission.

@@ -7,5 +7,5 @@ setup(
     description="Scalable storm identification and tracking for precipitation grids.",
     packages=find_packages(),
     python_requires=">=3.7",
-    install_requires=["numpy>=1.18", "scipy>=1.4", "scikit-image>=0.17"],
+    install_requires=["numpy>=1.18,<2.0", "scipy>=1.4,<2.0", "scikit-image>=0.17,<1.0"],
 )
