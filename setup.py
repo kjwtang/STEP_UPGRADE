@@ -3,9 +3,9 @@ from setuptools import find_packages, setup
 
 setup(
     name="step-upgrade",
-    version="0.1.0",
-    description="Scalable storm identification and tracking for precipitation grids.",
+    version="0.2.0",
+    description="Scalable storm identification and lineage tracking for precipitation grids.",
     packages=find_packages(),
     python_requires=">=3.7",
-    install_requires=["numpy>=1.18,<2.0", "scipy>=1.4,<2.0", "scikit-image>=0.17,<1.0"],
+    install_requires=["numpy>=1.18,<3.0", "scipy>=1.4,<2.0"],
 )

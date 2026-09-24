@@ -1,5 +1,6 @@
 # Compatible with the original STEP stack and suitable for Python 3.7+.
-numpy>=1.18,<2.0
+setuptools>=40.8
+numpy>=1.18,<3.0
 scipy>=1.4,<2.0
 scikit-image>=0.17,<1.0
-pytest>=6,<9
+pytest>=6,<10

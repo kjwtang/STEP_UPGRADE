@@ -15,4 +15,9 @@ python scripts/run_npy_validation.py /path/to/precip.npy \
   --output-dir results/smoke-${SLURM_JOB_ID} \
   --start 0 --stop 24 \
   --threshold 0.6 --bridge-radius 1 --min-size 4 \
-  --workers "${SLURM_CPUS_PER_TASK}" --tau 0.35 --max-displacement 20
+  --workers "${SLURM_CPUS_PER_TASK}" \
+  --tau 0.35 --max-displacement 20 \
+  --sequence-id smoke-test \
+  --max-gap 1 --gap-tau 0.45 --event-overlap 0.10 \
+  --gap-ambiguity 0.05 \
+  --state-output "results/smoke-${SLURM_JOB_ID}/state.json"
