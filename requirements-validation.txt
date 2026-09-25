@@ -1,0 +1,6 @@
+-r requirements-hpc.txt
+matplotlib>=3.6
+xarray>=2023.1
+netCDF4>=1.6
+psutil>=5.9
+pillow>=9

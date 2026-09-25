@@ -185,6 +185,12 @@ a small real subset before production.
 
 ## Scientific validation still required
 
+For NetCDF/NPY plots, statistics, chunk-equivalence checks, and high-resolution
+streaming time/memory benchmarks, see [the RCC validation guide](docs/REAL_DATA_VALIDATION.md).
+Install the optional diagnostics dependencies with
+`python -m pip install -r requirements-validation.txt`, then inspect an input
+using `python scripts/validate_real_data.py INPUT.nc --inspect`.
+
 The historical upgraded identification was compared with upstream STEP on one
 24-hour, 300×300 present-climate subset using a 1 mm h-1 threshold and a
 9-cell dilation radius: wet-mask IoU was 1.0 and adjusted Rand index was
