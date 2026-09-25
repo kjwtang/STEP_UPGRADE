@@ -185,6 +185,10 @@ a small real subset before production.
 
 ## Scientific validation still required
 
+For the controlled **original RDCEP STEP vs STEP_UPGRADE** comparison on the
+current 600×600 domain, including isolated time/memory limits and three-way
+identification/tracking diagnostics, see [the original comparison guide](docs/ORIGINAL_COMPARISON.md).
+
 For NetCDF/NPY plots, statistics, chunk-equivalence checks, and high-resolution
 streaming time/memory benchmarks, see [the RCC validation guide](docs/REAL_DATA_VALIDATION.md).
 Install the optional diagnostics dependencies with

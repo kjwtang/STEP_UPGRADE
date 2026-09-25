@@ -138,3 +138,35 @@ def test_wrf_rejects_bad_sequences(tmp_path,monkeypatch,issue,match):
         a.hours=4
     with pytest.raises(ValueError,match=match):
         load_input(a)
+
+
+def test_partition_metrics_label_permutation_and_split():
+    from compare_original_step import partition_metrics
+    a=np.array([[0,1,1],[2,2,0]])
+    b=np.array([[0,9,9],[4,4,0]])
+    assert partition_metrics(a,b)["ari_common_wet"]==1
+    b[0,2]=8
+    assert partition_metrics(a,b)["ari_common_wet"]<1
+
+
+def test_original_comparison_optional(tmp_path):
+    import os
+    reference=os.environ.get("STEP_ORIGINAL_TEST_DIR")
+    if not reference:
+        pytest.skip("Set STEP_ORIGINAL_TEST_DIR to the pinned original checkout for integration test")
+    source=wrf_source(tmp_path)
+    out=tmp_path/"comparison"
+    subprocess.run([sys.executable,str(SCRIPTS/"compare_original_step.py"),str(source),
+        "--original-dir",reference,"--output-dir",str(out),"--hours","5","--crop","12",
+        "--radius","0","--workers","1","--plot-frames","2","--timeout-seconds","30"],
+        check=True,capture_output=True,text=True,timeout=120)
+    assert (out/"SUCCESS").exists()
+    assert (out/"tracking_001.png").stat().st_size>1000
+    assert all(v["status"]=="completed" for v in json.loads((out/"stage_results.json").read_text()).values())
+
+
+def test_comparison_timeout_preserves_status(tmp_path):
+    from compare_original_step import run_stage
+    result=run_stage("new_id",dict(timeout_seconds=1e-9,memory_gb=8),tmp_path)
+    assert result["status"]=="timeout"
+    assert (tmp_path/"new_id/status.json").exists()
