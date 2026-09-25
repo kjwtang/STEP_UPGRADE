@@ -1,7 +1,7 @@
 # STEP_UPGRADE
 
 STEP_UPGRADE identifies two-dimensional precipitation objects and builds a
-time-continuous lineage graph. Version 0.2 distinguishes three identifiers:
+time-continuous lineage graph. Version 0.3 distinguishes three identifiers:
 
 - a `node_id` identifies one observed object at one time;
 - a `branch_id` follows an uninterrupted one-to-one track;
@@ -61,11 +61,21 @@ branch_labels, graph, state = track_with_graph(
 ```
 
 The algorithm predicts an object's next centroid from its last two observations
-and uses a KD-tree to generate physically reachable candidates. Each candidate
+and uses KD-trees to search around both its current and predicted centroids.
+Candidates with substantial raw or advected mask coverage also survive centroid
+gates; bounding-box intersection alone is insufficient. Each candidate
 records raw and motion-advected overlap, predicted-centroid distance, intensity
 continuity, and parent/child coverage. Split and merge decisions require
 overlap evidence. Remaining objects use deterministic maximum-score one-to-one
-assignment.
+assignment. Subthreshold edges are excluded before optimization, and unmatched
+objects are explicitly allowed. Score weights and the default tau are unchanged.
+Checkpoints carry an algorithm revision and cannot silently resume older results.
+
+To rerun only the upgraded tracker on a saved original comparison, use
+`python scripts/recheck_tracking.py results/original_vs_upgrade_600_mem24 --output-dir results/tracking_revision3`.
+This reuses the original outputs and identification, verifies chunk equivalence,
+and reports edge changes by frame/local-label identity. See
+[revision 3 verification](docs/TRACKING_REVISION3.md).
 
 Branch rules are intentionally strict:
 

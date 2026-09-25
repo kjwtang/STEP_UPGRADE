@@ -167,12 +167,19 @@ def test_original_comparison_optional(tmp_path):
     subprocess.run([sys.executable,str(SCRIPTS/"diagnose_tracking.py"),str(out),
         "--output-dir",str(diagnosis),"--frames","1","4"],check=True,capture_output=True,text=True,timeout=30)
     assert json.loads((diagnosis/"diagnosis.json").read_text())["replay_equal"]
+    recheck=tmp_path/"recheck"
+    subprocess.run([sys.executable,str(SCRIPTS/"recheck_tracking.py"),str(out),
+        "--output-dir",str(recheck),"--chunk-frames","2","--plot-frames","1"],
+        check=True,capture_output=True,text=True,timeout=60)
+    assert json.loads((recheck/"edge_changes.json").read_text())["chunk_rasters_and_graph_equal"]
+    assert (recheck/"new_id").is_symlink()
+    assert (out/"SUCCESS").exists()
 
 
 def test_assignment_diagnostic_counterexample():
     from diagnose_tracking import assignment_example
     result=assignment_example()
-    assert result["actual_selected"]==[(1,0,.8)]
+    assert result["actual_selected"]==[(0,0,.9)]
     assert result["feasible_higher_score_selection"]==[(0,0,.9)]
 
 

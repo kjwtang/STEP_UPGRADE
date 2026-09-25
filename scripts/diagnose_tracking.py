@@ -47,7 +47,8 @@ def assignment_example():
     got=Tracker._assignment(candidates,[0,1],[0,1],.35)
     return dict(tau=.35,scores=scores,actual_selected=[(x.parent_index,x.child_index,x.score) for x in got],
         feasible_higher_score_selection=[(0,0,.9)],
-        explanation="The .34 subthreshold edge participates in assignment before filtering, displacing .90 in favor of .80. This reproduces a code issue, not proof of its role in the RCC case.")
+        historical_selected=[(1,0,.8)],
+        explanation="Before revision 3, a .34 subthreshold edge displaced .90 in favor of .80. Current selection should be .90; this case alone does not explain RCC discontinuities.")
 
 
 def main():
@@ -116,7 +117,7 @@ def main():
             if edge:
                 reason="accepted_"+edge.event
             elif not row["admitted_to_candidates"]:
-                reason="outside_prediction_gate"
+                reason="outside_all_candidate_gates"
             elif not row["passes_score"]:
                 reason="below_score_threshold"
             elif row["parent_node_id"] in parents_used or child.node_id in children_used:
@@ -149,7 +150,7 @@ def main():
             f"score={r['score_if_evaluated']:.4f}, tau={tracker.tau:.3f}.")
     if not focus:
         lines.append("Requested screenshot branch pairs absent; inspect pair_decisions.csv rather than assuming IDs.")
-    lines += ["",summary["interpretation"],"", "A synthetic assignment counterexample is recorded separately. It establishes a post-filtering issue in the current code, not its contribution to these real-data failures."]
+    lines += ["",summary["interpretation"],"", "A synthetic assignment regression is recorded separately. Historical code selected .80 after post-filtering; revision 3 should select .90. This does not establish its contribution to real-data failures."]
     (out/"REPORT.md").write_text("\n".join(lines))
     print(json.dumps(summary,indent=2),flush=True)
 

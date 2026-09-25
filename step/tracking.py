@@ -315,6 +315,7 @@ class Tracker:
             raise ValueError("checkpoint belongs to a different sequence_id")
         self.state.sequence_id = requested_sequence
         config = {
+            "algorithm_revision": 3.0,
             "tau": self.tau,
             "max_displacement": self.max_displacement,
             "max_gap": float(self.max_gap),
@@ -346,6 +347,12 @@ class Tracker:
         if not parents or not children:
             return []
         tree = cKDTree(np.asarray([child.centroid for child in children]))
+        # Bounding-box centres/radii conservatively index potentially overlapping
+        # masks, independently of intensity-weighted centroid movement.
+        boxes = np.asarray([child.bbox for child in children], dtype=float)
+        centres = boxes.mean(axis=2)
+        radii = np.linalg.norm((boxes[:, :, 1] - boxes[:, :, 0]) / 2, axis=1)
+        overlap_tree = cKDTree(centres)
         output = []
         for pi, terminal in enumerate(parents):
             dt = time - terminal.node.time
@@ -353,13 +360,29 @@ class Tracker:
             predicted = (terminal.node.object.centroid[0] + vy * dt,
                          terminal.node.object.centroid[1] + vx * dt)
             radius = self.max_displacement * dt
-            for ci in sorted(tree.query_ball_point(predicted, radius)):
+            proximity = set(tree.query_ball_point(predicted, radius))
+            proximity.update(tree.query_ball_point(terminal.node.object.centroid, radius))
+            shift = (int(round(vy * dt)), int(round(vx * dt)))
+            overlap_indices = set()
+            parent_box = np.asarray(terminal.node.object.bbox, dtype=float)
+            parent_radius = np.linalg.norm((parent_box[:, 1] - parent_box[:, 0]) / 2)
+            for translation in ((0, 0), shift):
+                moved = parent_box + np.asarray(translation)[:, None]
+                possible = overlap_tree.query_ball_point(moved.mean(axis=1), parent_radius + radii.max())
+                for ci in possible:
+                    if np.all(np.minimum(moved[:, 1], boxes[ci, :, 1]) >
+                              np.maximum(moved[:, 0], boxes[ci, :, 0])):
+                        overlap_indices.add(ci)
+            for ci in sorted(proximity | overlap_indices):
                 child = children[ci]
                 distance = float(np.hypot(child.centroid[0] - predicted[0],
                                           child.centroid[1] - predicted[1]))
                 raw_iou, raw_pc, raw_cc = _pixel_overlap(terminal.node.object, child)
-                shift = (int(round(vy * dt)), int(round(vx * dt)))
                 adv_iou, adv_pc, adv_cc = _pixel_overlap(terminal.node.object, child, shift)
+                # Box intersection alone never admits a distant candidate.
+                coverage = max(raw_pc, raw_cc, adv_pc, adv_cc)
+                if ci not in proximity and not (coverage > 0 and coverage >= self.event_overlap):
+                    continue
                 overlap = max(raw_iou, adv_iou)
                 intensity = min(terminal.node.object.mean_intensity,
                                 child.mean_intensity) / max(
@@ -398,21 +421,27 @@ class Tracker:
 
     @staticmethod
     def _assignment(candidates, parent_indices, child_indices, minimum):
-        if not parent_indices or not child_indices:
-            return []
-        ppos = {v: i for i, v in enumerate(parent_indices)}
-        cpos = {v: i for i, v in enumerate(child_indices)}
-        matrix = np.full((len(parent_indices), len(child_indices)), -1e6)
-        lookup = {}
-        for item in candidates:
-            if item.parent_index in ppos and item.child_index in cpos:
-                key = (ppos[item.parent_index], cpos[item.child_index])
-                if item.score > matrix[key]:
-                    matrix[key], lookup[key] = item.score, item
-        rows, columns = linear_sum_assignment(-matrix)
-        return sorted((lookup[(r, c)] for r, c in zip(rows, columns)
-                       if (r, c) in lookup and lookup[(r, c)].score >= minimum),
-                      key=lambda item: (item.child_index, item.parent_index))
+        parents, children = set(parent_indices), set(child_indices)
+        eligible = [c for c in candidates if c.parent_index in parents and
+                    c.child_index in children and c.score >= minimum]
+        # Independent connected components avoid one full-domain dense matrix.
+        by_parent = {}
+        for c in eligible:
+            by_parent.setdefault(c.parent_index, []).append(c)
+        selected = []
+        for ps, cs in Tracker._components(eligible):
+            ppos, cpos = {p:i for i,p in enumerate(ps)}, {c:i for i,c in enumerate(cs)}
+            matrix = np.full((len(ps), len(cs) + len(ps)), -1e6)
+            matrix[:, len(cs):] = 0.0  # One available unmatched slot per parent.
+            lookup = {}
+            for pi in ps:
+                for item in by_parent[pi]:
+                    key = (ppos[pi], cpos[item.child_index])
+                    if item.score > matrix[key]:
+                        matrix[key], lookup[key] = item.score, item
+            rows, columns = linear_sum_assignment(-matrix)
+            selected.extend(lookup[(r,c)] for r,c in zip(rows,columns) if (r,c) in lookup)
+        return sorted(selected, key=lambda item: (item.child_index, item.parent_index))
 
     @staticmethod
     def _edge(time, parent, child_id, item, event, gap=0):

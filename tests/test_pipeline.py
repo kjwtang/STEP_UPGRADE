@@ -192,3 +192,48 @@ def test_split_and_merge_across_chunk_boundaries_match_whole_run():
     assert [(edge.parent_id, edge.child_id, edge.event) for edge in graph.edges] == [
         (edge.parent_id, edge.child_id, edge.event) for edge in edges
     ]
+
+
+def test_centroid_prediction_error_does_not_hide_current_position_candidate():
+    data = np.zeros((3,12,100), dtype=float)
+    for t,x in enumerate((20,39,25)):
+        data[t,4:8,x:x+30] = 2
+    tracked, graph = track_with_graph(labels(data), data, tau=.35, km=20)
+    assert len({n.branch_id for n in graph.objects}) == 1
+    assert graph.edges[-1].distance > 20  # Prediction misses, actual movement is only 14.
+
+
+def test_substantial_overlap_survives_both_centroid_gates():
+    data = np.zeros((2,12,160), dtype=float)
+    data[0,4:8,10:110] = 2
+    data[1,4:8,35:135] = 2
+    _, graph = track_with_graph(labels(data), data, tau=.35, km=5)
+    assert len(graph.edges)==1
+    assert graph.edges[0].raw_iou==pytest.approx(.6)
+
+
+def test_bbox_overlap_without_pixel_overlap_does_not_admit_distant_object():
+    from step.tracking import Tracker, _objects
+    data = np.zeros((2,10,10))
+    data[0,0,0],data[0,9,9]=100,1
+    data[1,0,9],data[1,9,0]=100,1
+    masks=(data>0).astype(int)  # Deliberately one disconnected object per frame.
+    tracker=Tracker(max_displacement=1)
+    tracker.update(0,masks[0],data[0])
+    assert tracker._candidates(tracker.state.active,_objects(masks[1],data[1]),1)==[]
+
+
+def test_assignment_discards_low_scores_before_optimization():
+    from step.tracking import Tracker,Candidate
+    candidates=[Candidate(i,j,s,0,0,0,0,0) for i,j,s in [(0,0,.9),(0,1,.34),(1,0,.8),(1,1,0)]]
+    result=Tracker._assignment(candidates,[0,1],[0,1],.35)
+    assert [(c.parent_index,c.child_index,c.score) for c in result]==[(0,0,.9)]
+    assert Tracker._assignment(candidates,[0,1],[0,1],.95)==[]
+
+
+def test_old_checkpoint_cannot_silently_resume_new_algorithm():
+    data=np.ones((1,4,4))
+    _,_,state=track_with_graph(labels(data),data,return_state=True)
+    state.tracking_config.pop("algorithm_revision")
+    with pytest.raises(ValueError,match="parameters"):
+        track_with_graph(labels(data),data,state=state)

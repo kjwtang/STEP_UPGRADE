@@ -3,7 +3,7 @@ from setuptools import find_packages, setup
 
 setup(
     name="step-upgrade",
-    version="0.2.0",
+    version="0.3.0",
     description="Scalable storm identification and lineage tracking for precipitation grids.",
     packages=find_packages(),
     python_requires=">=3.7",

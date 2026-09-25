@@ -1,5 +1,9 @@
 # STEP_UPGRADE 0.2 implementation and production guide
 
+For the 0.3 tracking changes, candidate gates, assignment correction, and checkpoint
+compatibility, see [Tracking revision 3](TRACKING_REVISION3.md). That supplement
+supersedes the tracking details below where they differ; identification is unchanged.
+
 This document records the behavior that downstream implementations and RCC
 production wrappers must preserve. It separates the implemented 0.2 core from
 work that still requires real-data calibration.
