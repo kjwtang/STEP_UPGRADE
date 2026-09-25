@@ -163,6 +163,17 @@ def test_original_comparison_optional(tmp_path):
     assert (out/"SUCCESS").exists()
     assert (out/"tracking_001.png").stat().st_size>1000
     assert all(v["status"]=="completed" for v in json.loads((out/"stage_results.json").read_text()).values())
+    diagnosis=tmp_path/"diagnosis"
+    subprocess.run([sys.executable,str(SCRIPTS/"diagnose_tracking.py"),str(out),
+        "--output-dir",str(diagnosis),"--frames","1","4"],check=True,capture_output=True,text=True,timeout=30)
+    assert json.loads((diagnosis/"diagnosis.json").read_text())["replay_equal"]
+
+
+def test_assignment_diagnostic_counterexample():
+    from diagnose_tracking import assignment_example
+    result=assignment_example()
+    assert result["actual_selected"]==[(1,0,.8)]
+    assert result["feasible_higher_score_selection"]==[(0,0,.9)]
 
 
 def test_comparison_timeout_preserves_status(tmp_path):
