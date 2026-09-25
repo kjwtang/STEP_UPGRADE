@@ -7,6 +7,40 @@
 python -m pip install -r requirements-validation.txt
 ```
 
+## RCC CIMP_1hr 原始 CSTM 多文件入口
+
+已确认此数据每小时一个文件，RAINNC(south_north,west_east)为累计mm，
+全域1010×1634。使用以下专用入口，脚本只加载裁剪后的降雨和经纬度，不加载三维气象场。
+目录递归搜索 `cstm_d01_*.nc`，按文件名时间排序，并逐文件与内部 Times 核对。
+`--start 0 --hours 24` 使用最早25个快照，产生24个相邻小时降雨增量；
+第一个快照仅作差分基准，不会虚构第一小时降雨。每个chunk都带上其前一小时基准。
+
+先在login node的新版仓库和独立环境中 `git pull --ff-only`，然后在compute node运行：
+
+```bash
+python scripts/validate_real_data.py \
+  /project2/moyer/kjwtang/tmp/CIMP_1hr/2005.07 \
+  --wrf-cumulative --inspect
+
+/usr/bin/time -v python -u scripts/validate_real_data.py \
+  /project2/moyer/kjwtang/tmp/CIMP_1hr/2005.07 \
+  --wrf-cumulative --rain-kind cumulative \
+  --hours 24 --crop 600 --workers 4 --chunk-frames 6 \
+  --sequence-id present_2005_rainnc_validation \
+  --stream --output-dir results/benchmark_rainnc_600
+```
+
+确认后将crop改为0、输出目录改为 `results/benchmark_rainnc_full` 即测全域原网格。
+小样本整段/分块一致性验证：去掉 `--stream`，使用 `--crop 300` 和新的输出目录。
+
+缺小时、重复时间、文件名与Times不符、网格改变和累计量减少都会停止。
+默认负差值容差为0；确有浮点舍入证据时才显式配置 `--negative-tolerance-mm`，
+脚本记录被截断的微小负差像素数，不自动把重启/累计桶回退当成0雨。
+无法由相邻累计量可靠恢复的重启区间需要另外的原始数据或重启记录。
+`wrfout_ref` 年份与时间不同会输出警告，并在每块metadata中保留来源属性；
+即使Times与文件名一致，也仍需确认这不是源文件复制/年份标注错误。
+此入口仅验证RAINNC网格尺度降雨，不宣称包含未提供的RAINC对流降雨分量。
+
 ## 1. 先确认数据
 
 ```bash
@@ -81,7 +115,8 @@ parent_peak_rss_mb 不含识别子进程。结合 `/usr/bin/time -v` 与作业�
 目前追踪的对象提取、像素重叠和全局匹配仍可能随对象数量迅速变慢。
 流式处理限制输入栅格占用，但不能保证任意高分辨率全域都能在32GB内运行。
 观察最密集降雨场景，不能仅按网格数线性外推整个JJA时间。
-跨月生产仍需外部清单/调度层；本脚本一次接受一个文件，不自动拼接原始小时文件。
+跨月生产仍需外部清单/调度层；普通入口一次接受一个多时次文件，
+专用 `--wrf-cumulative` 入口才支持CSTM原始小时目录；不要在同一目录混用两个气候年份。
 
 逐步扩大范围时记录相同 commit、输入时间、阈值、半径、位移、workers 和 chunk 大小。
 必要时额外对 workers=1/4、chunk=3/6 比较，其他条件不变。

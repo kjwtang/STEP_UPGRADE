@@ -85,3 +85,56 @@ def test_diagnostic_cli(tmp_path,stream):
     else:
         assert all(summary["checks"].values())
         assert (out / "tracking.gif").exists()
+
+
+def wrf_source(tmp_path, issue=None):
+    directory = tmp_path / "wrf"
+    directory.mkdir()
+    yy,xx = np.indices((12,12),dtype=np.float32)
+    for i in range(6):
+        stamp = f"2005-07-01_{i:02d}:00:00"
+        internal = stamp if issue!="time" or i!=2 else "2012-08-01_02:00:00"
+        rain = np.zeros((12,12),dtype=np.float32)
+        rain[3:6,4:7] = 2*i
+        if issue=="reset" and i==3:
+            rain[:] = 0
+        if issue=="missing" and i==3:
+            continue
+        coords_x = xx+1 if issue=="grid" and i==3 else xx
+        ds = xr.Dataset({"RAINNC":(("south_north","west_east"),rain,{"units":"mm"}),
+                         "Times":(("DateStrLen",),np.array(list(internal),dtype="S1")),
+                         "XLAT":(("south_north","west_east"),yy),
+                         "XLONG":(("south_north","west_east"),coords_x)})
+        ds.to_netcdf(directory / f"cstm_d01_{stamp}.nc")
+    return directory
+
+
+def test_wrf_difference_and_chunk_boundary(tmp_path,monkeypatch):
+    source = wrf_source(tmp_path)
+    a = options(monkeypatch,source,"--wrf-cumulative","--rain-kind","cumulative","--variable","RAINNC")
+    whole,meta = load_input(a)
+    assert whole.shape==(5,12,12)
+    assert np.all(whole[:,3:6,4:7]==2)
+    assert len(meta["input_files"])==6
+    a.hours = 2
+    first,_ = load_input(a)
+    a.start,a.hours = 2,3
+    second,_ = load_input(a)
+    np.testing.assert_array_equal(whole,np.concatenate([first,second]))
+    out = tmp_path / "stream"
+    subprocess.run([sys.executable,str(SCRIPTS / "validate_real_data.py"),str(source),
+        "--wrf-cumulative","--rain-kind","cumulative","--hours","5","--chunk-frames","2",
+        "--bridge-radius","0","--stream","--output-dir",str(out)],
+        check=True,capture_output=True,text=True,timeout=120)
+    assert (out / "SUCCESS").exists()
+
+
+@pytest.mark.parametrize("issue,match",[("time","Filename/Times"),("reset","decreased"),
+                                      ("missing","missing/irregular"),("grid","Coordinates change")])
+def test_wrf_rejects_bad_sequences(tmp_path,monkeypatch,issue,match):
+    source = wrf_source(tmp_path,issue)
+    a = options(monkeypatch,source,"--wrf-cumulative","--rain-kind","cumulative","--variable","RAINNC")
+    if issue=="missing":
+        a.hours=4
+    with pytest.raises(ValueError,match=match):
+        load_input(a)

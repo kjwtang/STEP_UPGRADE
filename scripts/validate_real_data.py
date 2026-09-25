@@ -26,7 +26,9 @@ def arguments():
     p.add_argument("--variable", help="Explicit NetCDF precipitation variable")
     p.add_argument("--dims", nargs=3, metavar=("TIME", "Y", "X"), help="NetCDF dimension order; defaults to variable order")
     p.add_argument("--time-coordinate", help="Decoded one-dimensional time coordinate, if different from time dimension")
-    p.add_argument("--rain-kind", choices=["interval", "rate"], help="interval=mm per interval; rate=mm/h; cumulative rain unsupported")
+    p.add_argument("--rain-kind", choices=["interval", "rate", "cumulative"], help="interval=mm per interval; rate=mm/h; cumulative requires --wrf-cumulative")
+    p.add_argument("--wrf-cumulative", action="store_true", help="Input is a directory of hourly 2-D CSTM RAINNC snapshots; validate and difference adjacent files")
+    p.add_argument("--negative-tolerance-mm",type=float,default=0.,help="Explicit rounding tolerance for tiny negative increments; default rejects any decrease")
     p.add_argument("--units", choices=["mm", "mm/h"], help="Explicit confirmed units, overrides metadata")
     p.add_argument("--dt-hours", type=float, help="Required for NPY or undecodable time; checked against decoded time")
     p.add_argument("--start", type=int, default=0)
@@ -54,6 +56,11 @@ def arguments():
 
 def load_input(a):
     """Slice before loading, preserve missing pixels, reject ambiguous inputs."""
+    if a.wrf_cumulative:
+        from wrf_rain_input import read_wrf
+        return read_wrf(a)
+    if a.rain_kind == "cumulative":
+        raise ValueError("Cumulative input requires --wrf-cumulative and a CSTM directory")
     dt, metadata = a.dt_hours, {}
     if a.input.suffix == ".npy":
         source = np.load(a.input, mmap_mode="r")
@@ -396,6 +403,8 @@ def main():
     a = arguments()
     if a.hours < 2 or a.crop < 0 or a.chunk_frames < 1 or a.workers < 1 or a.bridge_radius < 0:
         raise ValueError("Need >=2 frames and positive crop/chunk/workers; radius >=0")
+    if not np.isfinite(a.negative_tolerance_mm) or a.negative_tolerance_mm<0:
+        raise ValueError("negative tolerance must be finite and >=0")
     if a.grid_km is not None and (not np.isfinite(a.grid_km) or a.grid_km <= 0):
         raise ValueError("--grid-km must be positive")
     if a.stream and not a.inspect:
