@@ -177,11 +177,32 @@ def test_original_comparison_optional(tmp_path):
     assert (out/"SUCCESS").exists()
     audit_dir=tmp_path/"event_audit"
     subprocess.run([sys.executable,str(SCRIPTS/"audit_tracking_events.py"),str(recheck),
-        "--output-dir",str(audit_dir)],check=True,capture_output=True,text=True,timeout=60)
+        "--output-dir",str(audit_dir),"--include-overlap-policy"],check=True,capture_output=True,text=True,timeout=60)
     summaries=json.loads((audit_dir/"summary.json").read_text())
     assert summaries[0]["baseline_raster_equal"] is True
     assert {r["tau"] for r in summaries}=={.30,.325,.35}
+    assert len(summaries)==5
+    assert summaries[-1]['event_policy']=='overlap'
+    assert summaries[-2]['event_policy']=='score_and_overlap'
+    assert summaries[-1]['event_overlap']==summaries[-2]['event_overlap']==.5
     assert (audit_dir/"SUCCESS").exists()
+    import importlib.util
+    if importlib.util.find_spec('skimage') is not None:
+        suite=tmp_path/'tuesday_suite'
+        subprocess.run([sys.executable,str(SCRIPTS/'run_tuesday_suite.py'),str(recheck),
+            '--output-dir',str(suite)],check=True,capture_output=True,text=True,timeout=60)
+        assert (suite/'SUCCESS').exists()
+        statuses=json.loads((suite/'suite_status.json').read_text())
+        assert len(statuses)==3 and all(s['status']=='completed' for s in statuses)
+
+
+def test_tuesday_suite_failure_has_no_success(tmp_path):
+    source=tmp_path/'bad_source'; source.mkdir(); (source/'SUCCESS').touch()
+    out=tmp_path/'suite'
+    result=subprocess.run([sys.executable,str(SCRIPTS/'run_tuesday_suite.py'),str(source),
+        '--output-dir',str(out)],capture_output=True,text=True,timeout=20)
+    assert result.returncode!=0 and not (out/'SUCCESS').exists()
+    assert json.loads((out/'suite_status.json').read_text())[0]['status']=='failed'
 
 
 def test_event_audit_split_merge_gap(tmp_path):

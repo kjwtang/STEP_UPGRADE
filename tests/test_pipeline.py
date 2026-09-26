@@ -9,6 +9,49 @@ def labels(data):
     return identify(data, np.ones((1, 1), dtype=bool))
 
 
+def test_overlap_policy_preserves_contained_small_split():
+    data=np.zeros((2,20,80))
+    data[0,8:12,5:65]=2
+    data[1,8:12,5:55]=2
+    data[1,8:12,62:65]=2
+    lab=labels(data)
+    _,baseline=track_with_graph(lab,data,tau=.35,km=5)
+    _,experimental=track_with_graph(lab,data,tau=.35,km=5,
+        event_policy='overlap',event_overlap=.5,event_min_pixels=2)
+    assert not baseline.events
+    assert [e.event for e in experimental.events]==['split']
+    assert len(experimental.edges)==2
+    assert any(e.score<.35 for e in experimental.edges)
+
+
+def test_overlap_policy_chunk_resume_and_policy_guard(tmp_path):
+    data=np.zeros((4,20,80))
+    data[0,8:12,5:65]=2
+    data[1,8:12,5:55]=2; data[1,8:12,62:65]=2
+    data[2:4,8:12,5:65]=2
+    lab=labels(data)
+    options=dict(event_policy='overlap',event_overlap=.5,event_min_pixels=2,km=5)
+    whole,gwhole=track_with_graph(lab,data,**options)
+    first,g1,state=track_with_graph(lab[:2],data[:2],return_state=True,**options)
+    save_tracking_state(state,tmp_path/'state.json')
+    state=load_tracking_state(tmp_path/'state.json')
+    with pytest.raises(ValueError,match='parameters'):
+        track_with_graph(lab[2:],data[2:],state=state,km=5,event_overlap=.5)
+    second,g2=track_with_graph(lab[2:],data[2:],state=state,**options)
+    np.testing.assert_array_equal(whole,np.concatenate([first,second]))
+    assert gwhole.edges==g1.edges+g2.edges
+    assert gwhole.events==g1.events+g2.events
+
+
+def test_overlap_event_minimum_pixels_rejects_tiny_contact():
+    from step.tracking import Tracker, Candidate, _objects, TrackNode, Terminal
+    obj=_objects(np.ones((1,1),dtype=int),np.ones((1,1)))[0]
+    parent=Terminal(TrackNode(0,1,1,1,obj))
+    tracker=Tracker(event_policy='overlap',event_overlap=.5,event_min_pixels=2)
+    c=Candidate(0,0,.9,1,1,0,1,1)
+    assert not tracker._event_candidates([c],[parent],[obj])
+
+
 def test_parallel_identification_matches_serial():
     data = np.zeros((3, 30, 30), dtype=np.float32)
     data[:, 10:14, 10:14] = 2

@@ -296,7 +296,8 @@ class Tracker:
 
     def __init__(self, tau=0.35, max_displacement=20.0, max_gap=1,
                  gap_tau=None, gap_ambiguity=0.05, event_overlap=0.10,
-                 state=None, sequence_id=None):
+                 state=None, sequence_id=None, event_policy='score_and_overlap',
+                 event_min_pixels=1):
         if not 0 <= tau <= 1 or not 0 <= event_overlap <= 1:
             raise ValueError("tau and event_overlap must be in [0, 1]")
         if max_displacement <= 0 or max_gap < 0:
@@ -309,6 +310,13 @@ class Tracker:
             raise ValueError("gap_ambiguity must be non-negative")
         self.gap_ambiguity = float(gap_ambiguity)
         self.event_overlap = float(event_overlap)
+        if event_policy not in ('score_and_overlap', 'overlap'):
+            raise ValueError('Unknown event_policy')
+        if event_policy == 'overlap' and event_overlap <= 0:
+            raise ValueError('Overlap-only event policy requires positive event_overlap')
+        if int(event_min_pixels) != event_min_pixels or event_min_pixels < 1:
+            raise ValueError('event_min_pixels must be a positive integer')
+        self.event_policy, self.event_min_pixels = event_policy, int(event_min_pixels)
         self.state = state if state is not None else TrackingState()
         requested_sequence = sequence_id or self.state.sequence_id or "default"
         if self.state.sequence_id not in (None, requested_sequence):
@@ -323,6 +331,11 @@ class Tracker:
             "gap_ambiguity": self.gap_ambiguity,
             "event_overlap": self.event_overlap,
         }
+        # Keep default revision-3 checkpoints compatible; non-default policy
+        # must never resume a baseline checkpoint (or vice versa).
+        if self.event_policy != 'score_and_overlap' or self.event_min_pixels != 1:
+            config.update(event_policy_overlap=float(self.event_policy == 'overlap'),
+                          event_min_pixels=float(self.event_min_pixels))
         if self.state.tracking_config and self.state.tracking_config != config:
             raise ValueError("tracking parameters differ from the checkpoint")
         self.state.tracking_config = config
@@ -449,6 +462,22 @@ class Tracker:
                          gap, item.raw_iou, item.advected_iou, item.distance,
                          item.parent_coverage, item.child_coverage)
 
+    def _event_candidates(self, candidates, parents, children):
+        result = []
+        for c in candidates:
+            if max(c.parent_coverage, c.child_coverage) < self.event_overlap:
+                continue
+            if self.event_policy == 'score_and_overlap' and c.score < self.tau:
+                continue
+            # Coverage is max(raw, advected); multiplying by the respective
+            # object area recovers the largest supported intersection count.
+            pixels = max(c.parent_coverage * parents[c.parent_index].node.object.area,
+                         c.child_coverage * children[c.child_index].area)
+            if self.event_min_pixels > 1 and round(pixels) < self.event_min_pixels:
+                continue
+            result.append(c)
+        return result
+
     def update(self, time, labeled_map, precip):
         time = int(time)
         if self.state.last_time is not None and time <= self.state.last_time:
@@ -472,8 +501,7 @@ class Tracker:
                               self.state.next_node_id + len(objects)))
         self.state.next_node_id += len(objects)
         candidates = self._candidates(active, objects, time)
-        event_candidates = [c for c in candidates if c.score >= self.tau and
-                            max(c.parent_coverage, c.child_coverage) >= self.event_overlap]
+        event_candidates = self._event_candidates(candidates, active, objects)
         used_p, used_c, child_branch, child_parent = set(), set(), {}, {}
 
         for parents, children in self._components(event_candidates):
@@ -579,7 +607,8 @@ class Tracker:
 def track_with_graph(labeled_maps, precip_data, tau=0.35, phi=None, km=20.0,
                      workers=1, max_gap=1, gap_tau=None, gap_ambiguity=0.05,
                      event_overlap=0.10, state=None, start_time=None,
-                     return_state=False, sequence_id=None):
+                     return_state=False, sequence_id=None,
+                     event_policy='score_and_overlap', event_min_pixels=1):
     """Track a chunk and optionally return resumable state.
 
     ``km`` retains the legacy name and is grid cells per frame. ``phi`` and
@@ -593,7 +622,7 @@ def track_with_graph(labeled_maps, precip_data, tau=0.35, phi=None, km=20.0,
         start_time = 0 if state is None or state.last_time is None else state.last_time + 1
     tracker = Tracker(
         tau, km, max_gap, gap_tau, gap_ambiguity, event_overlap, state,
-        sequence_id
+        sequence_id, event_policy, event_min_pixels
     )
     result, combined = np.zeros(labels.shape, dtype=np.int64), TrackGraph()
     for offset in range(labels.shape[0]):

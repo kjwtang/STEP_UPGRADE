@@ -67,3 +67,66 @@ def test_saved_cube_experiment_cli(tmp_path):
     assert np.load(out/'system_0.1/labels.npy')[0].max()==1
     assert np.load(out/'partition_0.1/labels.npy')[0].max()==2
     assert not np.load(out/'partition_0.1/labels.npy')[1].any()
+    assert (out/'partition_0.1/objects.csv').exists()
+    assert np.load(out/'core_labels.npy')[0].max()==2
+    bounded=tmp_path/'bounded'
+    subprocess.run([sys.executable,str(Path(__file__).resolve().parents[1]/'scripts/compare_envelopes.py'),
+        str(source),'--output-dir',str(bounded),'--max-distance-km','1',
+        '--spacing-km','1','1','--cell-area-km2','2','--min-core-area-km2','2'],
+        check=True,capture_output=True,text=True)
+    assert (bounded/'SUCCESS').exists()
+    assert not np.load(bounded/'system_0.1/labels.npy')[0,3,5]
+    import csv
+    rows=list(csv.DictReader((bounded/'system_0.1/objects.csv').open()))
+    assert float(rows[0]['core_area_km2'])==2
+
+
+@pytest.mark.parametrize('mode',['partition','system'])
+def test_distance_cap_is_physical_and_does_not_cross_missing(mode):
+    rain=np.full((9,15),.2); rain[4,3]=2; rain[:,7]=np.nan
+    cores,env=identify_envelope(rain,mode=mode,max_distance_km=4,spacing_km=(2,1))
+    assert env[4,6]>0 and env[6,3]>0
+    assert not env[7,3] and not env[:,8:].any()
+    assert np.all(env[cores>0]>0)
+    _,zero=identify_envelope(rain,mode=mode,max_distance_km=0,spacing_km=(2,1))
+    assert np.array_equal(zero>0,cores>0)
+
+
+def test_explicit_physical_area_not_just_pixel_count():
+    rain=np.zeros((5,8)); rain[1,1:3]=2; rain[3,5:7]=2
+    area=np.ones(rain.shape); area[3,5:7]=3
+    cores,_=identify_envelope(rain,min_core_area_km2=5,cell_area_km2=area)
+    assert not cores[1].any() and cores[3].max()==1
+    with pytest.raises(ValueError):
+        identify_envelope(rain,min_core_area_km2=5)
+    with pytest.raises(ValueError):
+        identify_envelope(rain,max_distance_km=4)
+    with pytest.raises(ValueError):
+        identify_envelope(rain,cell_area_km2=-1)
+
+
+def test_statistics_mass_membership_and_censoring():
+    from step.envelope_statistics import envelope_statistics
+    rain=np.array([[2.,.2,0],[.1,.1,np.nan],[0,0,0]])
+    core=np.array([[1,0,0],[0,0,0],[0,0,0]])
+    env=np.array([[7,7,0],[7,7,0],[0,0,0]])
+    rows,members=envelope_statistics(rain,core,env,cell_area_km2=4)
+    r=rows[0]
+    assert r['envelope_label']==7
+    assert r['envelope_area_km2']==16 and r['core_area_km2']==4
+    assert r['rain_volume_rate_m3_h']==pytest.approx(9600)
+    assert r['noncore_rain_rate_fraction']==pytest.approx(1/6)
+    assert r['touches_missing'] and r['touches_domain_boundary']
+    assert members==[dict(envelope_label=7,core_label=1,core_cells=1)]
+    noarea,_=envelope_statistics(rain,core,env)
+    assert noarea[0]['rain_volume_rate_m3_h'] is None
+
+
+def test_statistics_many_to_many_disconnected_seed():
+    from step.envelope_statistics import envelope_statistics
+    rain=np.array([[2.,0,2.]])
+    cores=np.array([[1,0,1]])
+    env=np.array([[1,0,2]])
+    rows,members=envelope_statistics(rain,cores,env)
+    assert len(rows)==len(members)==2
+    assert {m['core_label'] for m in members}=={1}

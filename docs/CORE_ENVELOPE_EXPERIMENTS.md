@@ -1,5 +1,11 @@
 # Core/envelope experiments — not a validated production release
 
+This document describes frozen E1 (`4532608`). For the optional E2 physical
+controls, object statistics and T4 event experiment, see the
+[literature review](STORM_METHOD_REVIEW_2026-09-26.md) and
+[Tuesday matrix](TUESDAY_EXPERIMENT_MATRIX.md) on the literature-informed branch.
+E1 defaults remain unchanged.
+
 Frozen production baseline: commit `7159898` (tracking revision 3).
 Event-audit tooling: commit `1a8ec83`. Experimental code lives on
 `codex/core-envelope-experiments`; main and production defaults are unchanged.

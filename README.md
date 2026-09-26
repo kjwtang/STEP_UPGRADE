@@ -217,6 +217,10 @@ Detailed implementation and acceptance guidance is in
 [`docs/IMPLEMENTATION_GUIDE.md`](docs/IMPLEMENTATION_GUIDE.md).
 # Event sensitivity audit
 
+Literature-informed experiments: [method review](docs/STORM_METHOD_REVIEW_2026-09-26.md)
+and [Tuesday matrix / one-command suite](docs/TUESDAY_EXPERIMENT_MATRIX.md).
+These optional controls are not a validated production release.
+
 Experimental seeded rain envelopes (production defaults unchanged):
 [versions, scientific caveats and RCC protocol](docs/CORE_ENVELOPE_EXPERIMENTS.md).
 
