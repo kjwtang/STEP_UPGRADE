@@ -1,5 +1,9 @@
 # Storm identification/tracking: bounded literature-informed experiment
 
+**Primary project anchor:** [Chang et al. (2016) and scaling evidence](ORIGINAL_STEP_ANCHOR.md).
+The comparative methods below are secondary references. In particular, core-gated
+envelopes must not silently replace STEP's general precipitation-event definition.
+
 Date: 2026-09-26. Status: locally tested experimental implementation; no RCC
 scientific validation. Scope: rain-rate identification and event-link sensitivity,
 not a new convective/MCS classifier. Literature-derived observations and our design

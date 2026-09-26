@@ -217,6 +217,8 @@ Detailed implementation and acceptance guidance is in
 [`docs/IMPLEMENTATION_GUIDE.md`](docs/IMPLEMENTATION_GUIDE.md).
 # Event sensitivity audit
 
+Primary scientific baseline: [original STEP paper and scalability rationale](docs/ORIGINAL_STEP_ANCHOR.md).
+
 Literature-informed experiments: [method review](docs/STORM_METHOD_REVIEW_2026-09-26.md)
 and [Tuesday matrix / one-command suite](docs/TUESDAY_EXPERIMENT_MATRIX.md).
 These optional controls are not a validated production release.

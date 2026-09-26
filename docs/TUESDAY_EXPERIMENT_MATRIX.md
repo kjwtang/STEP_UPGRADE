@@ -2,6 +2,11 @@
 
 No RCC runs have been performed for these additions. Main stays unchanged.
 
+Scientific priority: retain the general rain-event baseline from
+[original STEP](ORIGINAL_STEP_ANCHOR.md). E1/E2 core-gated masks are alternative
+definitions, not a mandatory new definition of every storm. Do not interpret faster
+tracking as proof that the original similarity metric has been reproduced.
+
 | Version | Git reference | Purpose |
 |---|---|---|
 | T3 | `7159898` | Baseline candidate/assignment fixes; already run on RCC |
