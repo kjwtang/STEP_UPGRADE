@@ -8,4 +8,5 @@ setup(
     packages=find_packages(),
     python_requires=">=3.7",
     install_requires=["numpy>=1.18,<3.0", "scipy>=1.4,<2.0"],
+    extras_require={"envelope": ["scikit-image>=0.19,<1.0"]},
 )

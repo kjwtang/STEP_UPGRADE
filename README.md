@@ -217,5 +217,8 @@ Detailed implementation and acceptance guidance is in
 [`docs/IMPLEMENTATION_GUIDE.md`](docs/IMPLEMENTATION_GUIDE.md).
 # Event sensitivity audit
 
+Experimental seeded rain envelopes (production defaults unchanged):
+[versions, scientific caveats and RCC protocol](docs/CORE_ENVELOPE_EXPERIMENTS.md).
+
 For all-frame split/merge screening and a fixed-identification threshold sweep,
 see [event audit](docs/EVENT_AUDIT.md). Production defaults remain unchanged.
