@@ -161,6 +161,7 @@ def test_original_comparison_optional(tmp_path):
         "--radius","0","--workers","1","--plot-frames","2","--timeout-seconds","30"],
         check=True,capture_output=True,text=True,timeout=120)
     assert (out/"SUCCESS").exists()
+
     assert (out/"tracking_001.png").stat().st_size>1000
     assert all(v["status"]=="completed" for v in json.loads((out/"stage_results.json").read_text()).values())
     diagnosis=tmp_path/"diagnosis"
@@ -174,6 +175,29 @@ def test_original_comparison_optional(tmp_path):
     assert json.loads((recheck/"edge_changes.json").read_text())["chunk_rasters_and_graph_equal"]
     assert (recheck/"new_id").is_symlink()
     assert (out/"SUCCESS").exists()
+    audit_dir=tmp_path/"event_audit"
+    subprocess.run([sys.executable,str(SCRIPTS/"audit_tracking_events.py"),str(recheck),
+        "--output-dir",str(audit_dir)],check=True,capture_output=True,text=True,timeout=60)
+    summaries=json.loads((audit_dir/"summary.json").read_text())
+    assert summaries[0]["baseline_raster_equal"] is True
+    assert {r["tau"] for r in summaries}=={.30,.325,.35}
+    assert (audit_dir/"SUCCESS").exists()
+
+
+def test_event_audit_split_merge_gap(tmp_path):
+    from audit_tracking_events import audit
+    from step.identification import identify
+    data=np.zeros((5,20,20),dtype=np.float32)
+    data[0,8:12,5:15]=2
+    data[1,8:12,5:9]=2
+    data[1,8:12,11:15]=2
+    data[2,8:12,5:15]=2
+    data[4,8:12,5:15]=2
+    identified=identify(data,np.ones((1,1),dtype=bool))
+    result=audit(identified,data,tmp_path/'audit',.35,1,5)
+    assert result['event_types']=={'split':1,'merge':1}
+    assert result['edge_types']['gap_continue']==1
+    assert result['frames'][1]['event_structures_after_tau']=={'split':1}
 
 
 def test_assignment_diagnostic_counterexample():
