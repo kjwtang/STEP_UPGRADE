@@ -15,6 +15,24 @@ sys.path.insert(0, str(SCRIPTS))
 from validate_real_data import arguments, load_input
 
 
+def test_frame_progress_percentage_and_failure():
+    import io
+    from frame_progress import FrameProgress
+    stream=io.StringIO()
+    p=FrameProgress(24,stream=stream,clock=lambda:0.)
+    p.unit='hours'
+    p.update(12)
+    p.finish(False)
+    assert '12/24 hours tracked (50.0%)' in stream.getvalue()
+    assert 'FAILED' in stream.getvalue() and 'SUCCESS' not in stream.getvalue()
+    with pytest.raises(ValueError):
+        p.update(11)
+    quiet=io.StringIO()
+    p=FrameProgress(24,enabled=False,stream=quiet)
+    p.update(24); p.finish(True)
+    assert not quiet.getvalue()
+
+
 def make_source(tmp_path, irregular=False):
     rain = np.zeros((5,16,16),dtype=np.float32)
     for t in range(5):
@@ -71,12 +89,15 @@ def test_diagnostic_cli(tmp_path,stream):
         args += ["--stream","--save-labels"]
     else:
         args += ["--gif"]
-    subprocess.run(args,check=True,capture_output=True,text=True,timeout=120)
+    execution=subprocess.run(args,check=True,capture_output=True,text=True,timeout=120)
     summary = json.loads((out / "summary.json").read_text())
     assert (out / "SUCCESS").exists()
     assert (out / "statistics.png").stat().st_size>1000
     if stream:
         assert summary["nodes"]==5
+        assert '3/5 hours tracked (60.0%)' in execution.stderr
+        assert '5/5 hours tracked (100.0%)' in execution.stderr
+        assert 'SUCCESS: outputs saved' in execution.stderr
         assert summary["stage_seconds"]["tracking_seconds"]>0
         assert len(list(out.glob("chunk_*")))==3
         subprocess.run([sys.executable,str(SCRIPTS / "finalize_catalog.py"),

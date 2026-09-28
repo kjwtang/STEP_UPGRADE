@@ -51,6 +51,7 @@ def arguments():
     p.add_argument("--gif", action="store_true", help="Also write all-frame GIF (slower)")
     p.add_argument("--stream", action="store_true", help="High-resolution benchmark: process one chunk at a time; no whole-run equivalence check")
     p.add_argument("--save-labels", action="store_true", help="Streaming mode: save per-chunk label arrays (extra disk I/O)")
+    p.add_argument("--no-progress", action="store_true", help="Disable streaming frame progress")
     return p.parse_args()
 
 
@@ -251,6 +252,7 @@ def stream_benchmark(a):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+    from frame_progress import FrameProgress
     if not a.output_dir:
         raise ValueError("--output-dir required")
     out = a.output_dir
@@ -284,18 +286,22 @@ def stream_benchmark(a):
     events, n_nodes, n_edges, n_gaps = Counter(), 0, 0, 0
     began = time.perf_counter()
     cpu_started = time.process_time()
+    progress = FrameProgress(a.hours, enabled=not a.no_progress)
+    completed = False
     kwargs = dict(tau=a.tau, km=a.max_displacement, max_gap=a.max_gap, gap_tau=a.gap_tau,
                   gap_ambiguity=a.gap_ambiguity,event_overlap=a.event_overlap,sequence_id=a.sequence_id)
     try:
         for offset in range(0,a.hours,a.chunk_frames):
             b = copy.copy(a)
             b.start, b.hours = a.start+offset, min(a.chunk_frames,a.hours-offset)
+            progress.update(phase=f'reading frames {offset+1}-{offset+b.hours}')
             t = time.perf_counter()
             data, meta = load_input(b)
             read_s = time.perf_counter()-t
             if reference_dt is not None and not np.isclose(reference_dt,meta["dt_hours"]):
                 raise ValueError("Cadence changes between chunks")
             reference_dt = meta["dt_hours"]
+            progress.unit = 'hours' if np.isclose(reference_dt, 1.) else 'frames'
             time_verified &= meta["time_verified"]
             # Independently read the two frames around each file slice boundary.
             if offset and meta["time_verified"]:
@@ -310,13 +316,16 @@ def stream_benchmark(a):
             part_dir.mkdir()
             (part_dir / "metadata.json").write_text(json.dumps(meta,indent=2,default=str))
             print(f"Chunk {offset}:{offset+b.hours}, shape={data.shape}: identification",flush=True)
+            progress.update(phase='identification')
             t = time.perf_counter()
             labels = identify(data,disk(a.bridge_radius),workers=a.workers,threshold=a.threshold,min_size=a.min_size)
             identify_s = time.perf_counter()-t
             print("Tracking",flush=True)
             t = time.perf_counter()
-            tracked, graph, state = track_with_graph(labels,data,state=state,return_state=True,**kwargs)
+            tracked, graph, state = track_with_graph(labels,data,state=state,return_state=True,
+                progress_callback=lambda done,total: progress.update(offset+done),**kwargs)
             track_s = time.perf_counter()-t
+            progress.update(phase='saving chunk/checkpoint')
             t = time.perf_counter()
             write_graph(graph,part_dir)
             save_tracking_state(state,part_dir / "state.json")
@@ -327,6 +336,7 @@ def stream_benchmark(a):
             write_s = time.perf_counter()-t
             t = time.perf_counter()
             if offset == 0:
+                progress.update(phase='rendering preview maps')
                 plots(data,labels,tracked,graph,meta["dt_hours"],part_dir,a.gif)
             plot_s = time.perf_counter()-t
             counts = Counter(n.time for n in graph.objects)
@@ -350,6 +360,7 @@ def stream_benchmark(a):
                 writer.writerows(rows)
             print(json.dumps(row),flush=True)
             del data, labels, tracked, graph
+        progress.update(phase='finalizing reports; not yet marked successful')
         total = time.perf_counter()-began
         core = sum(r["identification_seconds"]+r["tracking_seconds"] for r in rows)
         timed_keys = ["read_seconds","identification_seconds","tracking_seconds","output_seconds","plot_seconds"]
@@ -393,8 +404,12 @@ def stream_benchmark(a):
             "Timing depends on rain-object density as well as grid size; do not extrapolate linearly to a full season. "
             "RSS includes shared pages more than once; inspect Slurm accounting for actual job usage.\n")
         (out / "SUCCESS").touch()
+        completed = True
+        progress.finish(True)
         print(json.dumps(summary,indent=2),flush=True)
     finally:
+        if not completed:
+            progress.finish(False)
         stop_monitor.set()
         thread.join(timeout=2)
 

@@ -9,6 +9,17 @@ def labels(data):
     return identify(data, np.ones((1, 1), dtype=bool))
 
 
+def test_progress_callback_does_not_change_tracking():
+    data=np.zeros((3,10,10)); data[:,3:5,3:5]=2
+    lab=labels(data)
+    calls=[]
+    expected,eg=track_with_graph(lab,data)
+    actual,ag=track_with_graph(lab,data,progress_callback=lambda n,total:calls.append((n,total)))
+    assert calls==[(1,3),(2,3),(3,3)]
+    np.testing.assert_array_equal(actual,expected)
+    assert ag==eg
+
+
 def test_overlap_policy_preserves_contained_small_split():
     data=np.zeros((2,20,80))
     data[0,8:12,5:65]=2

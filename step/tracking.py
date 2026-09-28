@@ -608,12 +608,15 @@ def track_with_graph(labeled_maps, precip_data, tau=0.35, phi=None, km=20.0,
                      workers=1, max_gap=1, gap_tau=None, gap_ambiguity=0.05,
                      event_overlap=0.10, state=None, start_time=None,
                      return_state=False, sequence_id=None,
-                     event_policy='score_and_overlap', event_min_pixels=1):
+                     event_policy='score_and_overlap', event_min_pixels=1,
+                     progress_callback=None):
     """Track a chunk and optionally return resumable state.
 
     ``km`` retains the legacy name and is grid cells per frame. ``phi`` and
     ``workers`` remain accepted for compatibility. Pass returned state into
     the next chunk/month, or persist it with :func:`save_tracking_state`.
+    Optional progress_callback(completed_frames, total_frames) runs after each
+    frame in this chunk. It does not indicate that output files have been saved.
     """
     labels, precip = np.asarray(labeled_maps), np.asarray(precip_data)
     if labels.shape != precip.shape or labels.ndim != 3:
@@ -632,6 +635,8 @@ def track_with_graph(labeled_maps, precip_data, tau=0.35, phi=None, km=20.0,
         combined.edges.extend(graph.edges)
         combined.events.extend(graph.events)
         combined.family_map = graph.family_map
+        if progress_callback is not None:
+            progress_callback(offset + 1, labels.shape[0])
     if return_state:
         return result, combined, tracker.state
     return result, combined
