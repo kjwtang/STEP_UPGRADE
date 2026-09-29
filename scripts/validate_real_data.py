@@ -45,6 +45,8 @@ def arguments():
     p.add_argument("--max-gap", type=int, default=1)
     p.add_argument("--gap-tau", type=float, default=.45)
     p.add_argument("--gap-ambiguity", type=float, default=.05)
+    p.add_argument("--gap-conflict-policy", choices=['off', 'endpoint_overlap'], default='off',
+                   help="Experimental one-frame gap guard; default preserves baseline")
     p.add_argument("--event-overlap", type=float, default=.10)
     p.add_argument("--chunk-frames", type=int, default=24)
     p.add_argument("--grid-km", type=float, help="Square grid spacing; enables km/h and km2 statistics")
@@ -289,7 +291,8 @@ def stream_benchmark(a):
     progress = FrameProgress(a.hours, enabled=not a.no_progress)
     completed = False
     kwargs = dict(tau=a.tau, km=a.max_displacement, max_gap=a.max_gap, gap_tau=a.gap_tau,
-                  gap_ambiguity=a.gap_ambiguity,event_overlap=a.event_overlap,sequence_id=a.sequence_id)
+                  gap_ambiguity=a.gap_ambiguity,event_overlap=a.event_overlap,sequence_id=a.sequence_id,
+                  gap_conflict_policy=a.gap_conflict_policy)
     try:
         for offset in range(0,a.hours,a.chunk_frames):
             b = copy.copy(a)
@@ -322,12 +325,15 @@ def stream_benchmark(a):
             identify_s = time.perf_counter()-t
             print("Tracking",flush=True)
             t = time.perf_counter()
+            gap_conflicts = []
             tracked, graph, state = track_with_graph(labels,data,state=state,return_state=True,
+                gap_conflict_callback=gap_conflicts.extend,
                 progress_callback=lambda done,total: progress.update(offset+done),**kwargs)
             track_s = time.perf_counter()-t
             progress.update(phase='saving chunk/checkpoint')
             t = time.perf_counter()
             write_graph(graph,part_dir)
+            (part_dir / 'gap_conflicts.json').write_text(json.dumps(gap_conflicts, indent=2))
             save_tracking_state(state,part_dir / "state.json")
             state = load_tracking_state(part_dir / "state.json")
             if a.save_labels:
@@ -446,7 +452,8 @@ def main():
                       min_size=a.min_size, valid_mask=valid)
     identification_seconds = time.perf_counter()-started
     kwargs = dict(tau=a.tau, km=a.max_displacement, max_gap=a.max_gap, gap_tau=a.gap_tau,
-                  gap_ambiguity=a.gap_ambiguity, event_overlap=a.event_overlap, sequence_id=a.sequence_id)
+                  gap_ambiguity=a.gap_ambiguity, event_overlap=a.event_overlap, sequence_id=a.sequence_id,
+                  gap_conflict_policy=a.gap_conflict_policy)
     print("Tracking whole sample", flush=True)
     track_started = time.perf_counter()
     tracked, graph, state = track_with_graph(labels, data, return_state=True, **kwargs)

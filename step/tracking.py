@@ -297,7 +297,7 @@ class Tracker:
     def __init__(self, tau=0.35, max_displacement=20.0, max_gap=1,
                  gap_tau=None, gap_ambiguity=0.05, event_overlap=0.10,
                  state=None, sequence_id=None, event_policy='score_and_overlap',
-                 event_min_pixels=1):
+                 event_min_pixels=1, gap_conflict_policy='off'):
         if not 0 <= tau <= 1 or not 0 <= event_overlap <= 1:
             raise ValueError("tau and event_overlap must be in [0, 1]")
         if max_displacement <= 0 or max_gap < 0:
@@ -305,6 +305,12 @@ class Tracker:
         self.tau = float(tau)
         self.max_displacement = float(max_displacement)
         self.max_gap = int(max_gap)
+        if gap_conflict_policy not in ('off', 'endpoint_overlap'):
+            raise ValueError('Unknown gap_conflict_policy')
+        if gap_conflict_policy != 'off' and max_gap != 1:
+            raise ValueError('Experimental gap conflict policy requires max_gap=1')
+        self.gap_conflict_policy = gap_conflict_policy
+        self.gap_conflicts = []
         self.gap_tau = float(gap_tau if gap_tau is not None else max(tau, 0.45))
         if gap_ambiguity < 0:
             raise ValueError("gap_ambiguity must be non-negative")
@@ -331,6 +337,8 @@ class Tracker:
             "gap_ambiguity": self.gap_ambiguity,
             "event_overlap": self.event_overlap,
         }
+        if gap_conflict_policy != 'off':
+            config['gap_conflict_endpoint_overlap_v1'] = 1.0
         # Keep default revision-3 checkpoints compatible; non-default policy
         # must never resume a baseline checkpoint (or vice versa).
         if self.event_policy != 'score_and_overlap' or self.event_min_pixels != 1:
@@ -479,6 +487,7 @@ class Tracker:
         return result
 
     def update(self, time, labeled_map, precip):
+        self.gap_conflicts = []
         time = int(time)
         if self.state.last_time is not None and time <= self.state.last_time:
             raise ValueError("tracking times must be strictly increasing")
@@ -547,6 +556,35 @@ class Tracker:
             item for item in self._candidates(dormant, objects, time)
             if 1 < time - dormant[item.parent_index].node.time <= self.max_gap + 1
         ]
+        if self.gap_conflict_policy == 'endpoint_overlap':
+            # Experimental, unadvected evidence. Require the SAME intermediate
+            # object to cover >=50% and >=16 cells of EACH endpoint. This flags
+            # missed adjacency, not a license to invent replacement edges.
+            retained = []
+            middle_sets = [(p.node.node_id, p.node.object, set(p.node.object.pixels)) for p in active]
+            for item in gap_candidates:
+                parent = dormant[item.parent_index].node
+                child = objects[item.child_index]
+                ps, cs = set(parent.object.pixels), set(child.pixels)
+                conflicts = []
+                for nid, middle, ms in middle_sets:
+                    # Exact intersections only for boxes intersecting BOTH
+                    # endpoints. Large-domain disjoint objects cost no set scan.
+                    if any(any(a[1] <= b[0] or b[1] <= a[0]
+                               for a, b in zip(endpoint.bbox, middle.bbox))
+                           for endpoint in (parent.object, child)):
+                        continue
+                    pi, ci = len(ps & ms), len(cs & ms)
+                    if pi >= max(16, .5*len(ps)) and ci >= max(16, .5*len(cs)):
+                        conflicts.append(dict(node_id=nid, parent_intersection=pi,
+                                              child_intersection=ci))
+                if conflicts:
+                    self.gap_conflicts.append(dict(time=time, parent_node_id=parent.node_id,
+                        child_node_id=node_ids[item.child_index], score=item.score,
+                        intermediate=conflicts))
+                else:
+                    retained.append(item)
+            gap_candidates = retained
         by_child = {}
         for item in gap_candidates:
             by_child.setdefault(item.child_index, []).append(item)
@@ -609,7 +647,7 @@ def track_with_graph(labeled_maps, precip_data, tau=0.35, phi=None, km=20.0,
                      event_overlap=0.10, state=None, start_time=None,
                      return_state=False, sequence_id=None,
                      event_policy='score_and_overlap', event_min_pixels=1,
-                     progress_callback=None):
+                     progress_callback=None, gap_conflict_policy='off', gap_conflict_callback=None):
     """Track a chunk and optionally return resumable state.
 
     ``km`` retains the legacy name and is grid cells per frame. ``phi`` and
@@ -625,11 +663,13 @@ def track_with_graph(labeled_maps, precip_data, tau=0.35, phi=None, km=20.0,
         start_time = 0 if state is None or state.last_time is None else state.last_time + 1
     tracker = Tracker(
         tau, km, max_gap, gap_tau, gap_ambiguity, event_overlap, state,
-        sequence_id, event_policy, event_min_pixels
+        sequence_id, event_policy, event_min_pixels, gap_conflict_policy
     )
     result, combined = np.zeros(labels.shape, dtype=np.int64), TrackGraph()
     for offset in range(labels.shape[0]):
         raster, graph = tracker.update(start_time + offset, labels[offset], precip[offset])
+        if gap_conflict_callback is not None:
+            gap_conflict_callback(tracker.gap_conflicts)
         result[offset] = raster
         combined.objects.extend(graph.objects)
         combined.edges.extend(graph.edges)
