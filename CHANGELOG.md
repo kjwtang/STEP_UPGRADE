@@ -6,6 +6,10 @@ each validation run. Do not update a checkout while its run is active.
 
 ## Unreleased — repository hygiene and identifier regression
 
+- Add `replay_stream_pairs.py`: saved object-statistics/mask replay with exact
+  raster and CSV checks before reporting adjacent-link rejection evidence.
+  No algorithm change; source chunk outputs are read-only.
+
 - Ignore local results, numerical inputs, logs and common credential files.
 - Test persistent branch IDs despite local-label changes and earlier-object
   disappearance; test non-reuse after checkpoint resume.
