@@ -13,7 +13,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import numpy as np
-from step.tracking import Tracker, StormObject, TrackGraph, load_tracking_state
+from step.tracking import Tracker, StormObject, TrackGraph, load_tracking_state, _pixel_overlap
 from diagnose_tracking import evidence
 from run_npy_validation import write_graph
 
@@ -97,12 +97,25 @@ def replay(source, output, pairs):
                     pi = next(j for j,v in enumerate(parents) if v.node.node_id == p)
                     ci = next(j for j,v in enumerate(children) if v.label == int(catalog[ch]['local_label']))
                     e = evidence(tracker, parents[pi], children[ci], t)
+                    terminal = parents[pi]
+                    _, rpc, rcc = _pixel_overlap(terminal.node.object, children[ci])
+                    velocity = tracker._velocity(terminal)
+                    shift = tuple(int(round(v*(t-terminal.node.time))) for v in velocity)
+                    _, apc, acc = _pixel_overlap(terminal.node.object, children[ci], shift)
                     candidate = cmap.get((pi,ci))
                     if candidate and not np.isclose(candidate.score,e['score_if_evaluated'],rtol=0,atol=1e-12):
                         raise ValueError('Score formula no longer reproduces implementation')
                     pending.append(dict(parent_node_id=p,child_node_id=ch,time=t,
                         admitted=candidate is not None,event_candidate=(pi,ci) in event_pairs,
                         strong_raw_overlap=(pi,ci) in strong_pairs,
+                        object_pair=[int(catalog[p]['time']),int(catalog[p]['local_label']),
+                                     int(catalog[ch]['time']),int(catalog[ch]['local_label'])],
+                        raw_parent_coverage=rpc,raw_child_coverage=rcc,
+                        advected_parent_coverage=apc,advected_child_coverage=acc,
+                        raw_intersection_cells=round(rpc*terminal.node.object.area),
+                        advected_intersection_cells=round(apc*terminal.node.object.area),
+                        previous_centroid=terminal.previous_centroid,previous_time=terminal.previous_time,
+                        parent_centroid=terminal.node.object.centroid,child_centroid=children[ci].centroid,
                         area_ratio=children[ci].area/parents[pi].node.object.area,**e))
             # _objects is replaced only for this isolated replay call. All
             # tracker decisions still use its actual production implementation.

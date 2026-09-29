@@ -4,7 +4,14 @@ Commit hashes identify reproducible experiments; package version 0.3.0 alone
 does not distinguish experimental revisions. Record `git rev-parse HEAD` with
 each validation run. Do not update a checkout while its run is active.
 
-## Unreleased — velocity reset ablation
+## Unreleased — paired velocity diagnostics
+
+- Add exact paired replay of reset-on/off streams using frame/local-label
+  identities. Automatically inspect newly lost reference continuations,
+  recovered controls, and new event links. Export separate raw/advected
+  coverage and motion history. Tracking behavior is unchanged.
+
+## a57ae22 — velocity reset ablation
 
 - Separate `--velocity-reset auto|off|morphology`; auto reproduces prior behavior
   and checkpoint configuration. Off disables resets without changing overlap

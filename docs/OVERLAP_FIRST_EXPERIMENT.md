@@ -101,3 +101,35 @@ The reference section counts the original continuation pairs absent before,
 lists which are recovered and their new event types, and lists any newly
 missing reference pairs. Identification and object measurements must match all
 three runs. Recovery is evidence about algorithm behavior, not ground truth.
+
+## Paired diagnostic replay after ablation
+
+```bash
+python -u scripts/diagnose_velocity_ablation.py \
+  results/full_domain_72h_overlapfirst_run1 \
+  results/full_domain_72h_overlapfirst_noreset_run1 \
+  --reference results/full_domain_72h_gapguard_run1 \
+  --output-dir results/velocity_paired_diagnosis_run1
+```
+
+No NetCDF reads or identification reruns. Both full streams are replayed from
+saved object statistics and masks; this is not independent verification of
+rain ingestion or object measurement. Input masks/measurements must agree in
+all three runs, and the two replay policies may differ only in effective
+velocity reset. IDs are resolved independently from frame/local-label pairs.
+
+Select all reference continue edges newly absent in reset-off, up to three
+recovered controls, and all adjacent edges newly classified as events. In the
+current 72-hour case this selects 10 lost pairs, 3 controls, and 2 split edges.
+Report area, raw/advected intersection and coverage, velocity/history, score,
+candidate admission, event eligibility, and actual incident edges. Raw overlap
+is input evidence; advected overlap depends on prediction. A policy change can
+alter earlier matches, so velocity differences are not necessarily attributable
+to a reset at only the current frame.
+
+Only after exact raster and all four catalog CSV checks succeed for both runs
+are the top-level REPORT.md, paired_diagnosis.json and SUCCESS written. If the
+second replay fails, partial subdirectories may remain; they are not a complete
+paired diagnosis. Output directories are never overwritten. No algorithm
+parameters are changed by this script and no automatic correctness verdict is
+assigned to gained/lost edges or split events.
