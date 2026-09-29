@@ -4,7 +4,15 @@ Commit hashes identify reproducible experiments; package version 0.3.0 alone
 does not distinguish experimental revisions. Record `git rev-parse HEAD` with
 each validation run. Do not update a checkout while its run is active.
 
-## Unreleased — replay performance and observability
+## Unreleased — coherent adjacent-score experiment
+
+- Opt-in `--score-policy coherent_adjacent`: compare complete stationary and
+  constant-velocity scores instead of mixing overlap from either hypothesis
+  with predicted distance. Multi-frame gap scoring and defaults unchanged.
+- Checkpoint guards and replay diagnostics support the policy. This is an
+  uncalibrated experiment; maximum-over-hypotheses may increase false links.
+
+## d86d4cd — replay performance and observability
 
 - Replace the diagnostic duplicate full-frame candidate pass with requested
   pair-only admission checks; production full-frame assignment is unchanged.

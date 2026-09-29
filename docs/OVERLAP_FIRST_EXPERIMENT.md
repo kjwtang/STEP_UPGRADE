@@ -145,3 +145,44 @@ to any particular stage until these measurements are available.
 After Ctrl-C, retain the old directory and use a new output name such as
 `results/velocity_paired_diagnosis_run2`. This is a full restart, not a resumed
 replay. No source results are overwritten and algorithm defaults are unchanged.
+
+## Coherent adjacent-score experiment
+
+`--score-policy coherent_adjacent` changes only dt=1 candidate scoring:
+
+```
+S_raw = 0.60 * raw_IoU + 0.25 * exp(-raw_distance / radius) + 0.15 * intensity_ratio
+S_motion = 0.60 * advected_IoU + 0.25 * exp(-prediction_error / radius) + 0.15 * intensity_ratio
+score = max(S_raw, S_motion)
+```
+
+The implementation retains the existing max(radius,1) denominator safeguard.
+The default `legacy` combines max(raw_IoU,advected_IoU) with prediction error.
+Candidate gates, coverage/event rules, identification and thresholds remain
+unchanged. dt>1 gap candidates retain legacy scoring. Score selection does not
+change the stored velocity; use `--velocity-reset off` to isolate the experiment.
+The edge `distance` column still means prediction error, even when S_raw wins.
+Replay JSON exposes both complete scores; old checkpoints remain compatible
+only with their original effective policy.
+
+This tests internal score consistency, not a meteorologically proven choice.
+Taking the maximum can admit more alternatives and cause false links or larger
+event components. Strong-overlap rescues still bypass tau, as in the prior run.
+Evaluate lost/recovered reference edges, target event geometry and new links.
+Do not tune thresholds just to reproduce this small set of examples.
+
+Run the same 72-hour command with `--velocity-reset off` and additionally
+`--score-policy coherent_adjacent`, writing to
+`results/full_domain_72h_coherent_run1`. Then compare:
+
+```bash
+python scripts/compare_stream_tracks.py \
+  results/full_domain_72h_overlapfirst_noreset_run1 \
+  results/full_domain_72h_coherent_run1 \
+  --reference results/full_domain_72h_gapguard_run1 \
+  --output-dir results/coherent_comparison_run1
+```
+
+Local tests cover failed motion prediction, useful translation, avoidance of
+mixed-hypothesis scores, unchanged gap candidate scoring, checkpoint equivalence
+and exact saved-statistics replay. RCC validation remains pending.

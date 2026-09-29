@@ -291,6 +291,16 @@ def _pixel_overlap(previous, current, shift=(0, 0)):
     )
 
 
+def coherent_score(raw_iou, advected_iou, raw_distance, predicted_distance, radius, intensity):
+    """Compare complete stationary and constant-velocity hypotheses.
+
+    This changes adjacent scoring only; it is not a calibrated probability.
+    """
+    raw = .60*raw_iou + .25*np.exp(-raw_distance/max(radius,1.)) + .15*intensity
+    adv = .60*advected_iou + .25*np.exp(-predicted_distance/max(radius,1.)) + .15*intensity
+    return float(max(raw,adv))
+
+
 class Tracker:
     """Stateful tracker for one climate/year/member sequence."""
 
@@ -298,7 +308,7 @@ class Tracker:
                  gap_tau=None, gap_ambiguity=0.05, event_overlap=0.10,
                  state=None, sequence_id=None, event_policy='score_and_overlap',
                  event_min_pixels=1, gap_conflict_policy='off', adjacent_policy='score',
-                 velocity_reset='auto'):
+                 velocity_reset='auto', score_policy='legacy'):
         if not 0 <= tau <= 1 or not 0 <= event_overlap <= 1:
             raise ValueError("tau and event_overlap must be in [0, 1]")
         if max_displacement <= 0 or max_gap < 0:
@@ -315,6 +325,9 @@ class Tracker:
         if adjacent_policy not in ('score', 'overlap_first'):
             raise ValueError('Unknown adjacent_policy')
         self.adjacent_policy = adjacent_policy
+        if score_policy not in ('legacy', 'coherent_adjacent'):
+            raise ValueError('Unknown score_policy')
+        self.score_policy = score_policy
         if velocity_reset not in ('auto', 'off', 'morphology'):
             raise ValueError('Unknown velocity_reset')
         legacy_reset = 'morphology' if adjacent_policy == 'overlap_first' else 'off'
@@ -350,6 +363,8 @@ class Tracker:
             config['gap_conflict_endpoint_overlap_v1'] = 1.0
         if adjacent_policy != 'score':
             config['adjacent_overlap_first_v1'] = 1.0
+        if score_policy != 'legacy':
+            config['coherent_adjacent_score_v1'] = 1.0
         # Omit when equivalent to the historical policy so old checkpoints
         # replay exactly. A changed effective setting must reject resume.
         if self.velocity_reset != legacy_reset:
@@ -427,6 +442,10 @@ class Tracker:
                 score = float(0.60 * overlap +
                               0.25 * np.exp(-distance / max(radius, 1.0)) +
                               0.15 * intensity)
+                if self.score_policy == 'coherent_adjacent' and dt == 1:
+                    raw_distance = float(np.linalg.norm(np.asarray(child.centroid) -
+                                                       terminal.node.object.centroid))
+                    score = coherent_score(raw_iou, adv_iou, raw_distance, distance, radius, intensity)
                 output.append(Candidate(pi, ci, score, raw_iou, adv_iou,
                                         distance, max(raw_pc, adv_pc),
                                         max(raw_cc, adv_cc)))
@@ -717,7 +736,8 @@ def track_with_graph(labeled_maps, precip_data, tau=0.35, phi=None, km=20.0,
                      return_state=False, sequence_id=None,
                      event_policy='score_and_overlap', event_min_pixels=1,
                      progress_callback=None, gap_conflict_policy='off', gap_conflict_callback=None,
-                     adjacent_policy='score', overlap_callback=None, velocity_reset='auto'):
+                     adjacent_policy='score', overlap_callback=None, velocity_reset='auto',
+                     score_policy='legacy'):
     """Track a chunk and optionally return resumable state.
 
     ``km`` retains the legacy name and is grid cells per frame. ``phi`` and
@@ -734,7 +754,7 @@ def track_with_graph(labeled_maps, precip_data, tau=0.35, phi=None, km=20.0,
     tracker = Tracker(
         tau, km, max_gap, gap_tau, gap_ambiguity, event_overlap, state,
         sequence_id, event_policy, event_min_pixels, gap_conflict_policy, adjacent_policy,
-        velocity_reset
+        velocity_reset, score_policy
     )
     result, combined = np.zeros(labels.shape, dtype=np.int64), TrackGraph()
     for offset in range(labels.shape[0]):

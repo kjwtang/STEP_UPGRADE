@@ -32,7 +32,8 @@ def test_reference_reports_partial_recovery(tmp_path):
 @pytest.mark.parametrize('guard',['off','endpoint_overlap'])
 @pytest.mark.parametrize('adjacent',['score','overlap_first'])
 @pytest.mark.parametrize('reset',['auto','off'])
-def test_replay_saved_statistics_exact_and_reject_changed_mask(tmp_path,guard,adjacent,reset):
+@pytest.mark.parametrize('scoring',['legacy','coherent_adjacent'])
+def test_replay_saved_statistics_exact_and_reject_changed_mask(tmp_path,guard,adjacent,reset,scoring):
     lab=np.zeros((3,20,20),dtype=int)
     lab[:,5:10,5:10]=1
     lab[1,2:14,2:14]=1
@@ -45,7 +46,8 @@ def test_replay_saved_statistics_exact_and_reject_changed_mask(tmp_path,guard,ad
         part=source/f'chunk_{i:06d}'
         part.mkdir(parents=True)
         tracked,graph,state=track_with_graph(lab[i:i+1],rain[i:i+1],state=state,
-            tau=.99,return_state=True,gap_conflict_policy=guard,adjacent_policy=adjacent,velocity_reset=reset)
+            tau=.99,return_state=True,gap_conflict_policy=guard,adjacent_policy=adjacent,velocity_reset=reset,
+            score_policy=scoring)
         write_graph(graph,part)
         save_tracking_state(state,part/'state.json')
         np.save(part/'identified_labels.npy',lab[i:i+1])

@@ -25,10 +25,15 @@ def evidence(tracker, parent, child, time, raw_overlap=None, advected_overlap=No
     adv,apc,acc=advected_overlap if advected_overlap is not None else _pixel_overlap(parent.node.object,child,shift)
     intensity=min(parent.node.object.mean_intensity,child.mean_intensity)/max(parent.node.object.mean_intensity,child.mean_intensity,1e-12)
     score=.6*max(raw,adv)+.25*np.exp(-distance/max(radius,1.))+.15*intensity
+    raw_score=.6*raw+.25*np.exp(-actual/max(radius,1.))+.15*intensity
+    adv_score=.6*adv+.25*np.exp(-distance/max(radius,1.))+.15*intensity
+    if tracker.score_policy=='coherent_adjacent' and dt==1:
+        score=max(raw_score,adv_score)
     return dict(actual_displacement_cells=actual,prediction_error_cells=distance,search_radius_cells=radius,
         velocity_y_cells_per_frame=float(velocity[0]),velocity_x_cells_per_frame=float(velocity[1]),
         raw_iou=raw,advected_iou=adv,parent_coverage=max(rpc,apc),child_coverage=max(rcc,acc),
         intensity_ratio=intensity,score_if_evaluated=float(score),
+        raw_hypothesis_score=float(raw_score),motion_hypothesis_score=float(adv_score),
         passes_score=bool(score>=tracker.tau),
         passes_event_overlap=bool(max(rpc,apc,rcc,acc)>=tracker.event_overlap),
         parent_area=parent.node.object.area,child_area=child.area)

@@ -85,7 +85,8 @@ def replay(source, output, pairs):
         gap_conflict_policy='endpoint_overlap' if c.get('gap_conflict_endpoint_overlap_v1') else 'off',
         adjacent_policy='overlap_first' if c.get('adjacent_overlap_first_v1') else 'score',
         velocity_reset=('morphology' if c['velocity_reset_morphology_v1'] else 'off')
-                       if 'velocity_reset_morphology_v1' in c else 'auto')
+                       if 'velocity_reset_morphology_v1' in c else 'auto',
+        score_policy='coherent_adjacent' if c.get('coherent_adjacent_score_v1') else 'legacy')
     if tracker.state.tracking_config != c:
         raise ValueError('Unsupported saved algorithm/configuration')
     catalog = {int(r['node_id']):r for part in parts for r in read_rows(part/'objects.csv')}

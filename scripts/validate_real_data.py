@@ -51,6 +51,8 @@ def arguments():
                    help="Experimental strong raw overlap priority; default preserves baseline")
     p.add_argument("--velocity-reset", choices=['auto', 'off', 'morphology'], default='auto',
                    help="auto preserves prior behavior; off isolates overlap policy without velocity resets")
+    p.add_argument("--score-policy", choices=['legacy', 'coherent_adjacent'], default='legacy',
+                   help="Opt-in complete raw/motion hypotheses for adjacent pairs only")
     p.add_argument("--event-overlap", type=float, default=.10)
     p.add_argument("--chunk-frames", type=int, default=24)
     p.add_argument("--grid-km", type=float, help="Square grid spacing; enables km/h and km2 statistics")
@@ -297,7 +299,7 @@ def stream_benchmark(a):
     kwargs = dict(tau=a.tau, km=a.max_displacement, max_gap=a.max_gap, gap_tau=a.gap_tau,
                   gap_ambiguity=a.gap_ambiguity,event_overlap=a.event_overlap,sequence_id=a.sequence_id,
                   gap_conflict_policy=a.gap_conflict_policy, adjacent_policy=a.adjacent_policy,
-                  velocity_reset=a.velocity_reset)
+                  velocity_reset=a.velocity_reset, score_policy=a.score_policy)
     try:
         for offset in range(0,a.hours,a.chunk_frames):
             b = copy.copy(a)
@@ -462,7 +464,7 @@ def main():
     kwargs = dict(tau=a.tau, km=a.max_displacement, max_gap=a.max_gap, gap_tau=a.gap_tau,
                   gap_ambiguity=a.gap_ambiguity, event_overlap=a.event_overlap, sequence_id=a.sequence_id,
                   gap_conflict_policy=a.gap_conflict_policy, adjacent_policy=a.adjacent_policy,
-                  velocity_reset=a.velocity_reset)
+                  velocity_reset=a.velocity_reset, score_policy=a.score_policy)
     print("Tracking whole sample", flush=True)
     track_started = time.perf_counter()
     tracked, graph, state = track_with_graph(labels, data, return_state=True, **kwargs)
