@@ -62,9 +62,10 @@ def test_empty_frame_still_gets_gap():
     assert [e.event for e in graph.edges]==['gap_continue']
 
 
-def test_chunk_resume_rasters_graph_and_diagnostics(tmp_path):
+@pytest.mark.parametrize('reset',['auto','off','morphology'])
+def test_chunk_resume_rasters_graph_and_diagnostics(tmp_path,reset):
     lab,rain=morphing()
-    opts=dict(km=5,adjacent_policy='overlap_first',gap_conflict_policy='endpoint_overlap')
+    opts=dict(km=5,adjacent_policy='overlap_first',gap_conflict_policy='endpoint_overlap',velocity_reset=reset)
     audits=[]
     whole,gw=track_with_graph(lab,rain,overlap_callback=audits.extend,**opts)
     rasters=[]; edges=[]; nodes=[]; partial=[]; state=None
@@ -87,3 +88,25 @@ def test_default_is_exactly_explicit_score():
     b,gb=track_with_graph(lab,rain,adjacent_policy='score')
     np.testing.assert_array_equal(a,b)
     assert ga==gb
+
+
+def test_velocity_reset_ablation_keeps_overlap_rescue_and_legacy_config():
+    lab,rain=morphing()
+    outputs={}
+    for reset in ('auto','morphology','off'):
+        audit=[]
+        raster,graph,state=track_with_graph(lab,rain,km=5,adjacent_policy='overlap_first',
+            velocity_reset=reset,return_state=True,overlap_callback=audit.extend)
+        outputs[reset]=(raster,graph,state,audit)
+        assert [e.event for e in graph.edges]==['continue','continue']
+        assert len(set(raster[:,4,6]))==1
+    a,b=outputs['auto'],outputs['morphology']
+    np.testing.assert_array_equal(a[0],b[0])
+    assert a[1]==b[1] and a[2].tracking_config==b[2].tracking_config and a[3]==b[3]
+    assert not any(r['action']=='reset_velocity' for r in outputs['off'][3])
+    assert Tracker._velocity(outputs['off'][2].active[0])!=(0.,0.)
+    assert Tracker._velocity(a[2].active[0])==(0.,0.)
+    with pytest.raises(ValueError,match='parameters differ'):
+        Tracker(state=a[2],max_displacement=5,adjacent_policy='overlap_first',velocity_reset='off')
+    with pytest.raises(ValueError,match='parameters differ'):
+        Tracker(state=outputs['off'][2],max_displacement=5,adjacent_policy='overlap_first')

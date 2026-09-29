@@ -33,7 +33,7 @@ def read_catalog(root):
     return identities, measurements, edges
 
 
-def compare(before, after, output):
+def compare(before, after, output, reference=None):
     if output.exists():
         raise FileExistsError(output)
     ids, old_objects, old = read_catalog(before)
@@ -63,6 +63,25 @@ def compare(before, after, output):
         changed_event=len(changed),before_edge_types=dict(Counter(old.values())),
         after_edge_types=dict(Counter(new.values())),focus_pairs=focus,
         note='More edges or fewer gaps is not proof of better tracking. Compare event maps and false links. Focus node IDs refer to the specified before run.')
+    if reference is not None:
+        _, ref_objects, ref_edges = read_catalog(reference)
+        if ref_objects != old_objects:
+            raise ValueError('Reference object measurements differ')
+        ref_parts=sorted(reference.glob('chunk_*'))
+        if [p.name for p in ref_parts] != [p.name for p in old_parts]:
+            raise ValueError('Reference chunk boundaries differ')
+        for a,b in zip(ref_parts,old_parts):
+            if not np.array_equal(np.load(a/'identified_labels.npy',mmap_mode='r'),
+                                  np.load(b/'identified_labels.npy',mmap_mode='r')):
+                raise ValueError('Reference identification differs')
+        ref_continue={k for k,v in ref_edges.items() if v=='continue'}
+        previously_missing=ref_continue-old.keys()
+        summary['reference_recovery']=dict(
+            reference=str(reference.resolve()),previously_missing_continue=len(previously_missing),
+            recovered_pairs=[dict(pair=k,event=new[k]) for k in sorted(previously_missing & new.keys())],
+            still_missing_pairs=sorted(previously_missing-new.keys()),
+            newly_missing_pairs=sorted((ref_continue & old.keys())-new.keys()),
+            note='Recovered pair may now be an event edge; recovery is not proof of correctness.')
     output.mkdir(parents=True)
     (output/'summary.json').write_text(json.dumps(summary,indent=2))
     (output/'edge_changes.json').write_text(json.dumps(dict(added=added,removed=removed,changed_event=changed),indent=2))
@@ -75,5 +94,6 @@ if __name__=='__main__':
     p.add_argument('before',type=Path)
     p.add_argument('after',type=Path)
     p.add_argument('--output-dir',type=Path,required=True)
+    p.add_argument('--reference',type=Path,help='Optional original baseline to quantify recovery of missing continue edges')
     a=p.parse_args()
-    compare(a.before,a.after,a.output_dir)
+    compare(a.before,a.after,a.output_dir,a.reference)

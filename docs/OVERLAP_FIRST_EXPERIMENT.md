@@ -75,4 +75,29 @@ real-data verification; synthetic checkpoint tests are not a substitute.
 - Default explicitly equals legacy score mode; existing baseline tests pass.
 - Saved-statistics replay supports both policies with exact raster/CSV checks.
 
-RCC results are pending. No claim of real-data accuracy improvement yet.
+RCC 72-hour results recovered seven focus pairs but lost 30 other continuation
+edges. Scientific validation remains pending; do not promote to default.
+
+## Velocity-reset ablation
+
+`--velocity-reset auto` (default) preserves historical behavior: morphology
+resets for overlap_first, no resets for score policy. `off` disables all such
+resets while retaining overlap-first rules; `morphology` explicitly enables
+them. The effective policy is checkpoint-protected. Old overlap-first checkpoints
+still replay with auto/morphology; they cannot resume with off.
+
+Repeat the same run with `--velocity-reset off`, saving to
+`results/full_domain_72h_overlapfirst_noreset_run1`. Compare with:
+
+```bash
+python scripts/compare_stream_tracks.py \
+  results/full_domain_72h_overlapfirst_run1 \
+  results/full_domain_72h_overlapfirst_noreset_run1 \
+  --reference results/full_domain_72h_gapguard_run1 \
+  --output-dir results/overlapfirst_noreset_comparison_run1
+```
+
+The reference section counts the original continuation pairs absent before,
+lists which are recovered and their new event types, and lists any newly
+missing reference pairs. Identification and object measurements must match all
+three runs. Recovery is evidence about algorithm behavior, not ground truth.

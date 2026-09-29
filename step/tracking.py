@@ -297,7 +297,8 @@ class Tracker:
     def __init__(self, tau=0.35, max_displacement=20.0, max_gap=1,
                  gap_tau=None, gap_ambiguity=0.05, event_overlap=0.10,
                  state=None, sequence_id=None, event_policy='score_and_overlap',
-                 event_min_pixels=1, gap_conflict_policy='off', adjacent_policy='score'):
+                 event_min_pixels=1, gap_conflict_policy='off', adjacent_policy='score',
+                 velocity_reset='auto'):
         if not 0 <= tau <= 1 or not 0 <= event_overlap <= 1:
             raise ValueError("tau and event_overlap must be in [0, 1]")
         if max_displacement <= 0 or max_gap < 0:
@@ -314,6 +315,10 @@ class Tracker:
         if adjacent_policy not in ('score', 'overlap_first'):
             raise ValueError('Unknown adjacent_policy')
         self.adjacent_policy = adjacent_policy
+        if velocity_reset not in ('auto', 'off', 'morphology'):
+            raise ValueError('Unknown velocity_reset')
+        legacy_reset = 'morphology' if adjacent_policy == 'overlap_first' else 'off'
+        self.velocity_reset = legacy_reset if velocity_reset == 'auto' else velocity_reset
         self.overlap_decisions = []
         self.gap_tau = float(gap_tau if gap_tau is not None else max(tau, 0.45))
         if gap_ambiguity < 0:
@@ -345,6 +350,10 @@ class Tracker:
             config['gap_conflict_endpoint_overlap_v1'] = 1.0
         if adjacent_policy != 'score':
             config['adjacent_overlap_first_v1'] = 1.0
+        # Omit when equivalent to the historical policy so old checkpoints
+        # replay exactly. A changed effective setting must reject resume.
+        if self.velocity_reset != legacy_reset:
+            config['velocity_reset_morphology_v1'] = float(self.velocity_reset == 'morphology')
         # Keep default revision-3 checkpoints compatible; non-default policy
         # must never resume a baseline checkpoint (or vice versa).
         if self.event_policy != 'score_and_overlap' or self.event_min_pixels != 1:
@@ -665,7 +674,7 @@ class Tracker:
             family = _find(self.state.family_parent, branch)
             node = TrackNode(time, node_ids[ci], branch, family, obj)
             parent = child_parent.get(ci)
-            if parent is not None and self.adjacent_policy == 'overlap_first' and time-parent.node.time == 1:
+            if parent is not None and self.velocity_reset == 'morphology' and time-parent.node.time == 1:
                 ratio = obj.area/parent.node.object.area
                 displacement = float(np.linalg.norm(np.asarray(obj.centroid)-parent.node.object.centroid))
                 if ratio < .5 or ratio > 2 or displacement > self.max_displacement:
@@ -708,7 +717,7 @@ def track_with_graph(labeled_maps, precip_data, tau=0.35, phi=None, km=20.0,
                      return_state=False, sequence_id=None,
                      event_policy='score_and_overlap', event_min_pixels=1,
                      progress_callback=None, gap_conflict_policy='off', gap_conflict_callback=None,
-                     adjacent_policy='score', overlap_callback=None):
+                     adjacent_policy='score', overlap_callback=None, velocity_reset='auto'):
     """Track a chunk and optionally return resumable state.
 
     ``km`` retains the legacy name and is grid cells per frame. ``phi`` and
@@ -724,7 +733,8 @@ def track_with_graph(labeled_maps, precip_data, tau=0.35, phi=None, km=20.0,
         start_time = 0 if state is None or state.last_time is None else state.last_time + 1
     tracker = Tracker(
         tau, km, max_gap, gap_tau, gap_ambiguity, event_overlap, state,
-        sequence_id, event_policy, event_min_pixels, gap_conflict_policy, adjacent_policy
+        sequence_id, event_policy, event_min_pixels, gap_conflict_policy, adjacent_policy,
+        velocity_reset
     )
     result, combined = np.zeros(labels.shape, dtype=np.int64), TrackGraph()
     for offset in range(labels.shape[0]):
