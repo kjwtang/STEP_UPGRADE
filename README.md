@@ -1,5 +1,8 @@
 # STEP_UPGRADE
 
+See [CHANGELOG.md](CHANGELOG.md) for reproducible experiment commits and the
+public-release checklist. Experimental branches are not validated releases.
+
 STEP_UPGRADE identifies two-dimensional precipitation objects and builds a
 time-continuous lineage graph. Version 0.3 distinguishes three identifiers:
 
