@@ -4,7 +4,16 @@ Commit hashes identify reproducible experiments; package version 0.3.0 alone
 does not distinguish experimental revisions. Record `git rev-parse HEAD` with
 each validation run. Do not update a checkout while its run is active.
 
-## Unreleased — paired velocity diagnostics
+## Unreleased — replay performance and observability
+
+- Replace the diagnostic duplicate full-frame candidate pass with requested
+  pair-only admission checks; production full-frame assignment is unchanged.
+- Reuse overlap evidence, index catalog rows by time, and report per-stage
+  elapsed time with a 15-second heartbeat. Exact raster/catalog checks remain.
+- Local tests verify pair-local candidate results against full-frame candidates.
+  RCC speedup is not yet measured; interrupted outputs are not resumed.
+
+## 413111d — paired velocity diagnostics
 
 - Add exact paired replay of reset-on/off streams using frame/local-label
   identities. Automatically inspect newly lost reference continuations,

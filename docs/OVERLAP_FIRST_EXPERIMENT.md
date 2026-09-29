@@ -133,3 +133,15 @@ second replay fails, partial subdirectories may remain; they are not a complete
 paired diagnosis. Output directories are never overwritten. No algorithm
 parameters are changed by this script and no automatic correctness verdict is
 assigned to gained/lost edges or split events.
+
+Replay diagnostics now compute additional candidate evidence only for requested
+pairs instead of duplicating the full-frame candidate pass. Normal tracking
+still computes all candidates and competition. Stage messages cover object
+reconstruction, pair evidence, tracking, raster checks and chunk catalog checks;
+a 15-second heartbeat reports elapsed time, not estimated progress inside a
+stage. Finished replay JSON includes stage_timings. A slowdown is not attributed
+to any particular stage until these measurements are available.
+
+After Ctrl-C, retain the old directory and use a new output name such as
+`results/velocity_paired_diagnosis_run2`. This is a full restart, not a resumed
+replay. No source results are overwritten and algorithm defaults are unchanged.

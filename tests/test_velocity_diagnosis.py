@@ -10,6 +10,27 @@ from run_npy_validation import write_graph
 from step.tracking import track_with_graph, save_tracking_state
 
 
+def test_single_pair_candidates_match_full_frame_candidates():
+    from step.tracking import Tracker, _objects
+    lab=np.zeros((2,30,100),dtype=int)
+    lab[:,3:8,3:18]=1
+    lab[:,15:21,60:90]=2
+    lab[1,3:8,18:28]=1
+    rain=(lab>0).astype(float)*2
+    tracker=Tracker(adjacent_policy='overlap_first',max_displacement=5)
+    tracker.update(0,lab[0],rain[0])
+    parents=tracker.state.active
+    children=_objects(lab[1],rain[1])
+    full={(c.parent_index,c.child_index):c for c in tracker._candidates(parents,children,1)}
+    for pi,parent in enumerate(parents):
+        for ci,child in enumerate(children):
+            single=tracker._candidates([parent],[child],1)
+            assert bool(single)==((pi,ci) in full)
+            if single:
+                from dataclasses import replace
+                assert replace(single[0],parent_index=pi,child_index=ci)==full[(pi,ci)]
+
+
 def test_selects_lost_controls_and_new_event_types():
     a,b,c=(0,1,1,1),(1,1,2,1),(2,1,3,1)
     old={a:'continue',c:'continue'}

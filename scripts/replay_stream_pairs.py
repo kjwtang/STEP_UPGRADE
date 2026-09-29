@@ -6,10 +6,13 @@ rain ingestion or the saved object statistics themselves.
 """
 import argparse
 import csv
+from contextlib import contextmanager
 from dataclasses import asdict
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import threading
+import time
 from unittest.mock import patch
 
 import numpy as np
@@ -19,6 +22,29 @@ from run_npy_validation import write_graph
 
 DEFAULT_PAIRS = [(7414,7500),(7500,7582),(7582,7669),(7669,7761),
                  (7624,7722),(7722,7807),(7807,7927)]
+
+
+@contextmanager
+def timed_stage(label, timings):
+    """Heartbeat exposes long frame-internal work; it is not an ETA."""
+    start=time.perf_counter()
+    stop=threading.Event()
+    print(f'{label}: START',flush=True)
+    def heartbeat():
+        while not stop.wait(15):
+            print(f'{label}: still running ({time.perf_counter()-start:.1f}s)',flush=True)
+    thread=threading.Thread(target=heartbeat,daemon=True)
+    thread.start()
+    ok=False
+    try:
+        yield
+        ok=True
+    finally:
+        stop.set()
+        thread.join()
+        elapsed=time.perf_counter()-start
+        timings.append(dict(stage=label,seconds=elapsed,completed=ok))
+        print(f'{label}: {"DONE" if ok else "INTERRUPTED/FAILED"} {elapsed:.3f}s',flush=True)
 
 
 def read_rows(path):
@@ -72,6 +98,10 @@ def replay(source, output, pairs):
     for pair in pairs:
         requested.setdefault(int(catalog[pair[1]]['time']), []).append(pair)
     decisions, conflicts, checked = [], [], 0
+    timings=[]
+    by_time={}
+    for r in catalog.values():
+        by_time.setdefault(int(r['time']),[]).append(r)
     for part in parts:
         labels = np.load(part/'identified_labels.npy', mmap_mode='r')
         saved = np.load(part/'tracked_labels.npy', mmap_mode='r')
@@ -81,33 +111,36 @@ def replay(source, output, pairs):
             t = offset+i
             if t != checked:
                 raise ValueError('Chunks must start at zero and be contiguous')
-            rows = [r for r in catalog.values() if int(r['time']) == t]
-            children = restore_objects(frame, rows)
+            label=f'frame {t+1}/{final.last_time+1} ({100*(t+1)/(final.last_time+1):.1f}%)'
+            with timed_stage(label+' restore objects',timings):
+                children = restore_objects(frame, by_time.get(t,[]))
             parents = list(tracker.state.active)
             pending = []
             if t in requested:
-                candidates = tracker._candidates(parents, children, t)
-                cmap = {(x.parent_index,x.child_index):x for x in candidates}
-                event_pairs = {(x.parent_index,x.child_index) for x in
-                               tracker._event_candidates(candidates, parents, children)}
-                strong_pairs = {(x.parent_index,x.child_index) for x in
-                                tracker._strong_overlap_candidates(candidates, parents, children)}
-                event_pairs |= strong_pairs
                 for p,ch in requested[t]:
                     pi = next(j for j,v in enumerate(parents) if v.node.node_id == p)
                     ci = next(j for j,v in enumerate(children) if v.label == int(catalog[ch]['local_label']))
-                    e = evidence(tracker, parents[pi], children[ci], t)
-                    terminal = parents[pi]
-                    _, rpc, rcc = _pixel_overlap(terminal.node.object, children[ci])
-                    velocity = tracker._velocity(terminal)
-                    shift = tuple(int(round(v*(t-terminal.node.time))) for v in velocity)
-                    _, apc, acc = _pixel_overlap(terminal.node.object, children[ci], shift)
-                    candidate = cmap.get((pi,ci))
+                    # Admission and pair eligibility are pair-local. Evaluate
+                    # only this pair; full competition still runs in update.
+                    with timed_stage(label+f' pair {p}->{ch}',timings):
+                        candidates=tracker._candidates([parents[pi]],[children[ci]],t)
+                        strong=tracker._strong_overlap_candidates(candidates,[parents[pi]],[children[ci]])
+                        event=tracker._event_candidates(candidates,[parents[pi]],[children[ci]])
+                        terminal = parents[pi]
+                        raw = _pixel_overlap(terminal.node.object, children[ci])
+                        velocity = tracker._velocity(terminal)
+                        shift = tuple(int(round(v*(t-terminal.node.time))) for v in velocity)
+                        adv = _pixel_overlap(terminal.node.object, children[ci], shift)
+                        _,rpc,rcc=raw
+                        _,apc,acc=adv
+                        e = evidence(tracker, terminal, children[ci], t,
+                                     raw_overlap=raw,advected_overlap=adv)
+                    candidate = candidates[0] if candidates else None
                     if candidate and not np.isclose(candidate.score,e['score_if_evaluated'],rtol=0,atol=1e-12):
                         raise ValueError('Score formula no longer reproduces implementation')
                     pending.append(dict(parent_node_id=p,child_node_id=ch,time=t,
-                        admitted=candidate is not None,event_candidate=(pi,ci) in event_pairs,
-                        strong_raw_overlap=(pi,ci) in strong_pairs,
+                        admitted=candidate is not None,event_candidate=bool(event or strong),
+                        strong_raw_overlap=bool(strong),
                         object_pair=[int(catalog[p]['time']),int(catalog[p]['local_label']),
                                      int(catalog[ch]['time']),int(catalog[ch]['local_label'])],
                         raw_parent_coverage=rpc,raw_child_coverage=rcc,
@@ -119,10 +152,12 @@ def replay(source, output, pairs):
                         area_ratio=children[ci].area/parents[pi].node.object.area,**e))
             # _objects is replaced only for this isolated replay call. All
             # tracker decisions still use its actual production implementation.
-            with patch('step.tracking._objects', return_value=children):
-                raster, graph = tracker.update(t, frame, np.zeros(frame.shape, dtype=np.float32))
-            if not np.array_equal(raster,saved[i]):
-                raise ValueError(f'Raster replay mismatch at {t}; do not interpret diagnostics')
+            with timed_stage(label+' tracking',timings):
+                with patch('step.tracking._objects', return_value=children):
+                    raster, graph = tracker.update(t, frame, np.zeros(frame.shape, dtype=np.float32))
+            with timed_stage(label+' raster verification',timings):
+                if not np.array_equal(raster,saved[i]):
+                    raise ValueError(f'Raster replay mismatch at {t}; do not interpret diagnostics')
             for row in pending:
                 p,ch = row['parent_node_id'],row['child_node_id']
                 accepted = [e for e in graph.edges if e.parent_id==p and e.child_id==ch]
@@ -141,14 +176,14 @@ def replay(source, output, pairs):
             combined.family_map = graph.family_map
             checked += 1
             print(f'[{checked}/{final.last_time+1}] replay verified', flush=True)
-        with TemporaryDirectory() as tmp:
+        with timed_stage(part.name+' catalog verification',timings), TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             write_graph(combined,tmp)
             for name in ('objects.csv','edges.csv','events.csv','family_map.csv'):
                 if (tmp/name).read_bytes() != (part/name).read_bytes():
                     raise ValueError(f'Graph replay mismatch: {part.name}/{name}')
     report = dict(replay_equal=True,frames_replayed=checked,tracking_config=c,
-                  pairs=decisions,gap_conflicts=conflicts,
+                  pairs=decisions,gap_conflicts=conflicts,stage_timings=timings,
                   note='Saved statistics/mask replay, not independent ingestion validation. Outside-gate scores are counterfactual; reasons are pair-level, not causal attribution.')
     output.mkdir(parents=True)
     (output/'diagnosis.json').write_text(json.dumps(report,indent=2))

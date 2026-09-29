@@ -12,7 +12,7 @@ import numpy as np
 from step.tracking import Tracker, Candidate, _objects, _pixel_overlap
 
 
-def evidence(tracker, parent, child, time):
+def evidence(tracker, parent, child, time, raw_overlap=None, advected_overlap=None):
     dt=time-parent.node.time
     velocity=np.asarray(tracker._velocity(parent))
     previous=np.asarray(parent.node.object.centroid)
@@ -20,9 +20,9 @@ def evidence(tracker, parent, child, time):
     actual=float(np.linalg.norm(np.asarray(child.centroid)-previous))
     distance=float(np.linalg.norm(np.asarray(child.centroid)-predicted))
     radius=tracker.max_displacement*dt
-    raw,rpc,rcc=_pixel_overlap(parent.node.object,child)
+    raw,rpc,rcc=raw_overlap if raw_overlap is not None else _pixel_overlap(parent.node.object,child)
     shift=tuple(int(round(v*dt)) for v in velocity)
-    adv,apc,acc=_pixel_overlap(parent.node.object,child,shift)
+    adv,apc,acc=advected_overlap if advected_overlap is not None else _pixel_overlap(parent.node.object,child,shift)
     intensity=min(parent.node.object.mean_intensity,child.mean_intensity)/max(parent.node.object.mean_intensity,child.mean_intensity,1e-12)
     score=.6*max(raw,adv)+.25*np.exp(-distance/max(radius,1.))+.15*intensity
     return dict(actual_displacement_cells=actual,prediction_error_cells=distance,search_radius_cells=radius,
