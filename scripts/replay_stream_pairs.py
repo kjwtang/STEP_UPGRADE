@@ -56,7 +56,8 @@ def replay(source, output, pairs):
         event_overlap=c['event_overlap'], sequence_id=final.sequence_id,
         event_policy='overlap' if c.get('event_policy_overlap') else 'score_and_overlap',
         event_min_pixels=int(c.get('event_min_pixels',1)),
-        gap_conflict_policy='endpoint_overlap' if c.get('gap_conflict_endpoint_overlap_v1') else 'off')
+        gap_conflict_policy='endpoint_overlap' if c.get('gap_conflict_endpoint_overlap_v1') else 'off',
+        adjacent_policy='overlap_first' if c.get('adjacent_overlap_first_v1') else 'score')
     if tracker.state.tracking_config != c:
         raise ValueError('Unsupported saved algorithm/configuration')
     catalog = {int(r['node_id']):r for part in parts for r in read_rows(part/'objects.csv')}
@@ -87,6 +88,9 @@ def replay(source, output, pairs):
                 cmap = {(x.parent_index,x.child_index):x for x in candidates}
                 event_pairs = {(x.parent_index,x.child_index) for x in
                                tracker._event_candidates(candidates, parents, children)}
+                strong_pairs = {(x.parent_index,x.child_index) for x in
+                                tracker._strong_overlap_candidates(candidates, parents, children)}
+                event_pairs |= strong_pairs
                 for p,ch in requested[t]:
                     pi = next(j for j,v in enumerate(parents) if v.node.node_id == p)
                     ci = next(j for j,v in enumerate(children) if v.label == int(catalog[ch]['local_label']))
@@ -96,6 +100,7 @@ def replay(source, output, pairs):
                         raise ValueError('Score formula no longer reproduces implementation')
                     pending.append(dict(parent_node_id=p,child_node_id=ch,time=t,
                         admitted=candidate is not None,event_candidate=(pi,ci) in event_pairs,
+                        strong_raw_overlap=(pi,ci) in strong_pairs,
                         area_ratio=children[ci].area/parents[pi].node.object.area,**e))
             # _objects is replaced only for this isolated replay call. All
             # tracker decisions still use its actual production implementation.

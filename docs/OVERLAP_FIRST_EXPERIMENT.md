@@ -1,0 +1,78 @@
+# Adjacent overlap-first experiment (opt-in)
+
+Default `adjacent_policy='score'` is unchanged. This experiment is NOT a
+scientifically validated release and does not force the seven RCC target pairs
+to be linked. It is designed to test whether morphology-induced centroid jumps
+should be allowed to break otherwise strongly overlapping adjacent objects.
+
+## Rule
+
+For candidates admitted by the existing candidate generator, require RAW
+(unadvected) intersection >=16 cells, coverage of BOTH objects >=15%, and
+coverage of at least one object >=50%. Recover the common raw intersection
+from raw IoU and the two areas; never combine raw and predicted masks to qualify.
+These constants are provisional experimental definitions, not literature-
+calibrated thresholds or a claim that 16 cells has a universal physical scale.
+
+Union qualifying pairs with existing event candidates. Multi-object components
+produce split/merge/complex events first. Remaining isolated strong pairs are
+continued before ordinary score-based assignment; other candidates keep normal
+scoring. Gap scoring is unchanged. Actual original scores are retained in edge
+outputs, so an accepted edge may be below tau. Weak baseline links are not
+otherwise disabled; the event-union design can expand families and must be
+reviewed for over-linking.
+
+For adjacent continuations only, reset inferred velocity when area changes by
+more than a factor of two or centroid displacement exceeds max_displacement.
+The branch ID is retained. A reset is zero estimated velocity, not a measured
+wind estimate. This is part of the opt-in experiment and is not separately
+calibrated. Split/merge children already begin with no inherited velocity.
+
+`adjacent_overlap.json` in each streaming chunk records accepted strong pairs
+(including whether the score was below tau) and velocity resets. Candidate
+scores are not probabilities. Checkpoints record the policy revision and reject
+cross-policy resume. Ordinary baseline checkpoints remain compatible with the
+default. The policy is supported by saved-stream replay diagnostics.
+
+## RCC controlled run
+
+Keep the same 72-hour input and gap guard as the previous experiment; add only
+`--adjacent-policy overlap_first` and a new output directory. Do not overwrite
+previous results or start from their final checkpoint.
+
+```bash
+/usr/bin/time -v python -u scripts/validate_real_data.py \
+  /path/to/hourly/2005.07 --wrf-cumulative --rain-kind cumulative \
+  --hours 72 --crop 0 --threshold 1 --bridge-radius 9 \
+  --workers 4 --tau 0.35 --max-displacement 20 \
+  --gap-conflict-policy endpoint_overlap --adjacent-policy overlap_first \
+  --chunk-frames 6 --stream --save-labels \
+  --sequence-id cimp_2005_july_full72 \
+  --output-dir results/full_domain_72h_overlapfirst_run1
+
+python scripts/compare_stream_tracks.py \
+  results/full_domain_72h_gapguard_run1 \
+  results/full_domain_72h_overlapfirst_run1 \
+  --output-dir results/overlapfirst_comparison_run1
+```
+
+Comparison checks identical identification masks and object measurements, then
+compares edges using (frame,local_label) endpoint keys, not branch numbers.
+Review seven focus pairs AND all added/deleted/event-changed edges. More edges
+is not success by itself. Look for large false event families and unnecessary
+branch changes. Runtime/memory and full-domain chunk equivalence still require
+real-data verification; synthetic checkpoint tests are not a substitute.
+
+## Local regression coverage
+
+- Persistent core with a transient distant lobe: adjacent ID continuity and
+  velocity reset, rather than alternating gap chains.
+- Split followed by merge: explicit event edges and fresh branch IDs.
+- No overlap, tiny fragments and small-contact slivers: no overlap rescue.
+- Truly empty middle frame: gap still permitted.
+- Checkpoint restart: exact rasters, object/edge outputs and diagnostics;
+  policy mismatch rejected.
+- Default explicitly equals legacy score mode; existing baseline tests pass.
+- Saved-statistics replay supports both policies with exact raster/CSV checks.
+
+RCC results are pending. No claim of real-data accuracy improvement yet.

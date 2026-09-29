@@ -297,7 +297,7 @@ class Tracker:
     def __init__(self, tau=0.35, max_displacement=20.0, max_gap=1,
                  gap_tau=None, gap_ambiguity=0.05, event_overlap=0.10,
                  state=None, sequence_id=None, event_policy='score_and_overlap',
-                 event_min_pixels=1, gap_conflict_policy='off'):
+                 event_min_pixels=1, gap_conflict_policy='off', adjacent_policy='score'):
         if not 0 <= tau <= 1 or not 0 <= event_overlap <= 1:
             raise ValueError("tau and event_overlap must be in [0, 1]")
         if max_displacement <= 0 or max_gap < 0:
@@ -311,6 +311,10 @@ class Tracker:
             raise ValueError('Experimental gap conflict policy requires max_gap=1')
         self.gap_conflict_policy = gap_conflict_policy
         self.gap_conflicts = []
+        if adjacent_policy not in ('score', 'overlap_first'):
+            raise ValueError('Unknown adjacent_policy')
+        self.adjacent_policy = adjacent_policy
+        self.overlap_decisions = []
         self.gap_tau = float(gap_tau if gap_tau is not None else max(tau, 0.45))
         if gap_ambiguity < 0:
             raise ValueError("gap_ambiguity must be non-negative")
@@ -339,6 +343,8 @@ class Tracker:
         }
         if gap_conflict_policy != 'off':
             config['gap_conflict_endpoint_overlap_v1'] = 1.0
+        if adjacent_policy != 'score':
+            config['adjacent_overlap_first_v1'] = 1.0
         # Keep default revision-3 checkpoints compatible; non-default policy
         # must never resume a baseline checkpoint (or vice versa).
         if self.event_policy != 'score_and_overlap' or self.event_min_pixels != 1:
@@ -486,8 +492,28 @@ class Tracker:
             result.append(c)
         return result
 
+    def _strong_overlap_candidates(self, candidates, parents, children):
+        """Experimental RAW overlap: >=16 pixels, both >=15%, either >=50%.
+
+        Raw IoU recovers the actual common intersection. Do not mix raw and
+        advected coverages here: uncertain velocity must not manufacture rescue
+        evidence. Constants are experiment definitions, not calibrated physics.
+        """
+        if self.adjacent_policy == 'score':
+            return []
+        result = []
+        for c in candidates:
+            pa = parents[c.parent_index].node.object.area
+            ca = children[c.child_index].area
+            intersection = round(c.raw_iou * (pa+ca) / (1+c.raw_iou))
+            pc, cc = intersection/pa, intersection/ca
+            if intersection >= 16 and min(pc,cc) >= .15 and max(pc,cc) >= .5:
+                result.append(c)
+        return result
+
     def update(self, time, labeled_map, precip):
         self.gap_conflicts = []
+        self.overlap_decisions = []
         time = int(time)
         if self.state.last_time is not None and time <= self.state.last_time:
             raise ValueError("tracking times must be strictly increasing")
@@ -511,6 +537,12 @@ class Tracker:
         self.state.next_node_id += len(objects)
         candidates = self._candidates(active, objects, time)
         event_candidates = self._event_candidates(candidates, active, objects)
+        strong = self._strong_overlap_candidates(candidates, active, objects)
+        # Multi-object evidence goes through existing split/merge/complex
+        # components before one-to-one links. Never choose a single child just
+        # to make a physically ambiguous event look like a continuation.
+        event_keys = {(c.parent_index,c.child_index) for c in event_candidates}
+        event_candidates += [c for c in strong if (c.parent_index,c.child_index) not in event_keys]
         used_p, used_c, child_branch, child_parent = set(), set(), {}, {}
 
         for parents, children in self._components(event_candidates):
@@ -536,6 +568,18 @@ class Tracker:
                         item, event))
             used_p.update(parents)
             used_c.update(children)
+
+        # Isolated strong-overlap pairs take precedence over centroid scoring.
+        # All multi-edge components have already been consumed above.
+        for item in strong:
+            if item.parent_index in used_p or item.child_index in used_c:
+                continue
+            parent = active[item.parent_index]
+            child_branch[item.child_index] = parent.node.branch_id
+            child_parent[item.child_index] = parent
+            used_p.add(item.parent_index)
+            used_c.add(item.child_index)
+            graph.edges.append(self._edge(time, parent, node_ids[item.child_index], item, 'continue'))
 
         remaining_p = [i for i in range(len(active)) if i not in used_p]
         remaining_c = [i for i in range(len(objects)) if i not in used_c]
@@ -621,6 +665,16 @@ class Tracker:
             family = _find(self.state.family_parent, branch)
             node = TrackNode(time, node_ids[ci], branch, family, obj)
             parent = child_parent.get(ci)
+            if parent is not None and self.adjacent_policy == 'overlap_first' and time-parent.node.time == 1:
+                ratio = obj.area/parent.node.object.area
+                displacement = float(np.linalg.norm(np.asarray(obj.centroid)-parent.node.object.centroid))
+                if ratio < .5 or ratio > 2 or displacement > self.max_displacement:
+                    # Keep branch identity but do not treat morphology-induced
+                    # centroid displacement as reliable advective velocity.
+                    self.overlap_decisions.append(dict(time=time, parent_node_id=parent.node.node_id,
+                        child_node_id=node_ids[ci], action='reset_velocity', area_ratio=ratio,
+                        displacement_cells=displacement))
+                    parent = None
             terminal = Terminal(node) if parent is None else Terminal(
                 node, parent.node.object.centroid, parent.node.time)
             new_active.append(terminal)
@@ -635,6 +689,12 @@ class Tracker:
                               if i not in used_dormant and
                               time - d.node.time <= self.max_gap]
         self.state.last_time = time
+        strong_keys = {(active[c.parent_index].node.node_id,node_ids[c.child_index]) for c in strong}
+        for edge in graph.edges:
+            if (edge.parent_id,edge.child_id) in strong_keys:
+                self.overlap_decisions.append(dict(time=time,parent_node_id=edge.parent_id,
+                    child_node_id=edge.child_id,action='strong_raw_overlap',event=edge.event,
+                    score=edge.score,below_tau=edge.score < self.tau,raw_iou=edge.raw_iou))
         graph.family_map = {b: _find(self.state.family_parent, b)
                             for b in sorted(self.state.family_parent)}
         for node in graph.objects:
@@ -647,7 +707,8 @@ def track_with_graph(labeled_maps, precip_data, tau=0.35, phi=None, km=20.0,
                      event_overlap=0.10, state=None, start_time=None,
                      return_state=False, sequence_id=None,
                      event_policy='score_and_overlap', event_min_pixels=1,
-                     progress_callback=None, gap_conflict_policy='off', gap_conflict_callback=None):
+                     progress_callback=None, gap_conflict_policy='off', gap_conflict_callback=None,
+                     adjacent_policy='score', overlap_callback=None):
     """Track a chunk and optionally return resumable state.
 
     ``km`` retains the legacy name and is grid cells per frame. ``phi`` and
@@ -663,13 +724,15 @@ def track_with_graph(labeled_maps, precip_data, tau=0.35, phi=None, km=20.0,
         start_time = 0 if state is None or state.last_time is None else state.last_time + 1
     tracker = Tracker(
         tau, km, max_gap, gap_tau, gap_ambiguity, event_overlap, state,
-        sequence_id, event_policy, event_min_pixels, gap_conflict_policy
+        sequence_id, event_policy, event_min_pixels, gap_conflict_policy, adjacent_policy
     )
     result, combined = np.zeros(labels.shape, dtype=np.int64), TrackGraph()
     for offset in range(labels.shape[0]):
         raster, graph = tracker.update(start_time + offset, labels[offset], precip[offset])
         if gap_conflict_callback is not None:
             gap_conflict_callback(tracker.gap_conflicts)
+        if overlap_callback is not None:
+            overlap_callback(tracker.overlap_decisions)
         result[offset] = raster
         combined.objects.extend(graph.objects)
         combined.edges.extend(graph.edges)
