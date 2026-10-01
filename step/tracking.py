@@ -378,7 +378,7 @@ class Tracker:
         if adjacent_policy == 'overlap_balanced':
             config['adjacent_overlap_balanced_v2'] = 1.0
         if adjacent_policy == 'overlap_ranked':
-            config['adjacent_overlap_ranked_v1'] = 1.0
+            config['adjacent_overlap_ranked_v2'] = 1.0
         if self.gap_min_pixels != 1:
             config['gap_min_pixels'] = float(self.gap_min_pixels)
         if family_map_scope != 'global':
@@ -611,17 +611,19 @@ class Tracker:
             by_parent.setdefault(c.parent_index,[]).append(entry)
             by_child.setdefault(c.child_index,[]).append(entry)
             ranked.append(entry)
-        def dominant(values,c):
+        def dominant(values):
             values=sorted(values,key=lambda v:v[0],reverse=True)
             best=values[0]
-            return (best[1] is c and (len(values)==1 or
-                    best[0]>values[1][0] and best[0]>=2*values[1][0]))
+            return best[1] if (len(values)==1 or
+                best[0]>values[1][0] and best[0]>=2*values[1][0]) else None
+        parent_best={i:dominant(v) for i,v in by_parent.items()}
+        child_best={i:dominant(v) for i,v in by_child.items()}
         result=[]
         for intersection,c in ranked:
             pa=parents[c.parent_index].node.object.area
             ca=children[c.child_index].area
             if (intersection>=16 and min(intersection/pa,intersection/ca)>=.15 and
-                dominant(by_parent[c.parent_index],c) and dominant(by_child[c.child_index],c)):
+                parent_best[c.parent_index] is c and child_best[c.child_index] is c):
                 result.append(c)
         return result
 
@@ -695,6 +697,19 @@ class Tracker:
             used_c.add(item.child_index)
             graph.edges.append(self._edge(time, parent, node_ids[item.child_index], item, 'continue'))
 
+        remaining_p = [i for i in range(len(active)) if i not in used_p]
+        remaining_c = [i for i in range(len(objects)) if i not in used_c]
+        for item in self._assignment(candidates, remaining_p, remaining_c, self.tau):
+            parent = active[item.parent_index]
+            child_branch[item.child_index] = parent.node.branch_id
+            child_parent[item.child_index] = parent
+            used_p.add(item.parent_index)
+            used_c.add(item.child_index)
+            graph.edges.append(self._edge(time, parent, node_ids[item.child_index],
+                                           item, "continue"))
+
+        # Weak geometric rescue must not preempt score-qualified assignment.
+        # Ranking still includes ALL candidates, including reserved endpoints.
         ranked = self._ranked_overlap_candidates(candidates, active, objects)
         accepted_ranked=[]
         for item in ranked:
@@ -706,17 +721,6 @@ class Tracker:
             used_p.add(item.parent_index);used_c.add(item.child_index)
             accepted_ranked.append(item)
             graph.edges.append(self._edge(time,parent,node_ids[item.child_index],item,'continue'))
-
-        remaining_p = [i for i in range(len(active)) if i not in used_p]
-        remaining_c = [i for i in range(len(objects)) if i not in used_c]
-        for item in self._assignment(candidates, remaining_p, remaining_c, self.tau):
-            parent = active[item.parent_index]
-            child_branch[item.child_index] = parent.node.branch_id
-            child_parent[item.child_index] = parent
-            used_p.add(item.parent_index)
-            used_c.add(item.child_index)
-            graph.edges.append(self._edge(time, parent, node_ids[item.child_index],
-                                           item, "continue"))
 
         dormant = [d for d in self.state.dormant
                    if time - d.node.time <= self.max_gap + 1]

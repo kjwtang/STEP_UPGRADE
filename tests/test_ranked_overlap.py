@@ -29,3 +29,22 @@ def test_ranked_keeps_significant_four_way_event_priority():
     _,graph=track_with_graph(lab,(lab>0).astype(float)*2,**OPTIONS)
     assert [e.event for e in graph.events]==['split']
     assert len(graph.edges)==4 and all(e.event=='split' for e in graph.edges)
+
+
+def test_weak_ranked_rescue_does_not_steal_score_qualified_child(monkeypatch):
+    from step.tracking import Tracker,Candidate
+    tracker=Tracker(**OPTIONS)
+    initial=np.zeros((30,80),dtype=int)
+    initial[5:15,5:25]=1;initial[5:15,45:65]=2
+    _,parents=tracker.update(0,initial,(initial>0).astype(float)*2)
+    child=np.zeros_like(initial);child[5:15,21:41]=1
+    def candidates(parents,children,time):
+        if len(parents)!=2 or not children:return []
+        return [Candidate(0,0,.25,1/9,1/9,30.,.2,.2),
+                Candidate(1,0,.9,0.,1.,0.,1.,1.)]
+    monkeypatch.setattr(tracker,'_candidates',candidates)
+    raster,graph=tracker.update(1,child,(child>0).astype(float)*2)
+    assert len(graph.edges)==1
+    assert graph.edges[0].parent_id==parents.objects[1].node_id
+    assert raster[5,21]==parents.objects[1].branch_id
+    assert not any(r['action']=='mutual_dominant_raw_overlap' for r in tracker.overlap_decisions)

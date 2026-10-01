@@ -4,14 +4,15 @@ Opt-in `--adjacent-policy overlap_ranked`. Defaults and balanced-v2 results
 are unchanged. This is a testable relational ranking rule, not HDBSCAN and not
 a probability model or validated physical storm classifier.
 
-Keep balanced-v2 event topology and symmetric strong continuations. Before
-ordinary score assignment, admit an otherwise unused pair when:
+Keep balanced-v2 event topology and symmetric strong continuations. After
+ordinary score assignment has completed, admit an otherwise unused pair when:
 
 - Stationary-mask intersection is at least 16 cells and covers at least 15%
   of both endpoints.
 - The pair has each endpoint's largest raw intersection across **all** its
   candidate neighbors, and at least twice the runner-up intersection. Ties reject.
-- Neither endpoint was consumed by a significant event or strong continuation.
+- Neither endpoint was consumed by a significant event, strong continuation or
+  ordinary score-qualified assignment.
 
 Candidates consumed by earlier stages still participate in ranking. Do not
 remove a competing best match and then promote a weaker residual as dominant.
@@ -29,3 +30,10 @@ evaluate untouched July-10 and August-20 72-hour windows. Do not call the reused
 windows independent holdouts. Compare against balanced-v2 with identical
 identification, and verify seven-frame checkpoint restoration. Preserve every
 version by commit, rather than replacing old result directories.
+
+V1 (`0cb4715`) ranked before ordinary score matching. An August holdout removed
+one score-qualified continuation, and a synthetic ordering test demonstrates
+that ranking can steal an already-qualified child. V2 ranks only orphan endpoints
+after that assignment; its checkpoint key is `adjacent_overlap_ranked_v2`.
+Reuse the first holdouts as regression cases, not independent validation; add
+untouched July-20 and August-25 72-hour windows for the fixed v2 rule.
