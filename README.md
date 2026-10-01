@@ -231,3 +231,9 @@ Experimental seeded rain envelopes (production defaults unchanged):
 
 For all-frame split/merge screening and a fixed-identification threshold sweep,
 see [event audit](docs/EVENT_AUDIT.md). Production defaults remain unchanged.
+
+Balanced-overlap v2 and exact worker modes:
+[freeze protocol](docs/TRACKING_FREEZE_PROTOCOL.md) and
+[local 1996 assessment, limitations and reproduction commands](docs/LOCAL_FREEZE_ASSESSMENT.md).
+The tracking candidate remains opt-in; engineering reproducibility does not
+establish a final scientific storm definition.

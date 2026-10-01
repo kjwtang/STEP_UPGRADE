@@ -20,6 +20,16 @@ configuration. Original cumulative input files are never modified.
 
 ## Reproduce the window
 
+For direct bounded streaming from rain-only files (no prepared whole-year cube),
+use `validate_real_data.py DATA_DIRECTORY --wrf-cumulative --rain-kind cumulative
+--wrf-time-source filename --wrf-grid-source attributes` with the remaining stream
+options below. `--start` is the index of the preceding cumulative snapshot;
+N intervals require N+1 consecutive snapshots. The first snapshot cannot supply
+its own hourly increment without an earlier predecessor.
+
+The latest candidate and measured worker behavior are documented in
+[the local freeze assessment](LOCAL_FREEZE_ASSESSMENT.md).
+
 Replace DATA_DIRECTORY and choose a fresh output path:
 
 ```bash

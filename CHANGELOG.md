@@ -12,7 +12,10 @@ each validation run. Do not update a checkout while its run is active.
   dilation mode with global connectivity and observed-only family-map output.
 - Stream rain-only hourly filename inputs with explicit grid-attribute checks;
   record source hashes. Add synthetic topology, seam and checkpoint tests.
-- See `docs/TRACKING_FREEZE_PROTOCOL.md`; real-data v2 validation is pending.
+- See `docs/TRACKING_FREEZE_PROTOCOL.md`; scientific promotion remains pending.
+- The local assessment now records four real-input windows, exact worker/checkpoint
+  checks, and remaining scientific caveats. Add a reproducible worker benchmark
+  and final-known family export that retains original branch/as-of family IDs.
 
 ## Unreleased — coherent adjacent-score experiment
 
