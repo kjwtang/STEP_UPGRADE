@@ -6,6 +6,12 @@ each validation run. Do not update a checkout while its run is active.
 
 ## Unreleased — balanced v2 and scaling candidate
 
+- Freeze a named operational ranked-v2 reference (`daf7011` tracking core),
+  preserving legacy defaults. Weak ranked rescue now follows score assignment.
+  Six-window comparison retains all continuations/events, with 168-frame exact
+  checkpoint replay and final-reference worker equality. Scientific production
+  validity and identification/envelope sensitivity remain separate work.
+
 - Separate balanced continuation evidence from unequal split/merge topology;
   add explicit gap endpoint size floor. Scientific defaults remain unchanged.
 - Vectorize stable relabel and branch raster construction; add exact halo

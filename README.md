@@ -237,3 +237,8 @@ Balanced-overlap v2 and exact worker modes:
 [local 1996 assessment, limitations and reproduction commands](docs/LOCAL_FREEZE_ASSESSMENT.md).
 The tracking candidate remains opt-in; engineering reproducibility does not
 establish a final scientific storm definition.
+
+Current named operational reference:
+[tracking reference freeze v1](docs/TRACKING_REFERENCE_FREEZE.md).
+It freezes ranked-v2 implementation/configuration for the next experiment stage,
+not a claim of validated multi-year climate production or convective classification.

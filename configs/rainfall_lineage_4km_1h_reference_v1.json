@@ -1,0 +1,29 @@
+{
+  "preset_id": "rainfall_lineage_4km_1h_reference_v1",
+  "status": "operational_reference_freeze_not_scientific_production_certification",
+  "tracking_core_commit": "daf70111e76fecfd90db69afb1aeeb8634526836",
+  "input_contract": {
+    "grid_km": 4,
+    "dt_hours": 1,
+    "rain_units_after_normalization": "mm/h"
+  },
+  "identification": {
+    "threshold_mm_h": 1,
+    "bridge_radius_cells": 9,
+    "min_size_cells": 1
+  },
+  "tracking": {
+    "tau": 0.35,
+    "max_displacement": 20,
+    "max_gap": 1,
+    "gap_tau": 0.45,
+    "gap_ambiguity": 0.05,
+    "event_overlap": 0.1,
+    "gap_conflict_policy": "endpoint_overlap",
+    "adjacent_policy": "overlap_ranked",
+    "velocity_reset": "off",
+    "score_policy": "coherent_adjacent",
+    "gap_min_pixels": 16,
+    "family_map_scope": "observed"
+  }
+}

@@ -26,6 +26,7 @@ def main():
     p.add_argument('--workers',type=int,nargs='+',default=[1,2,4,8])
     p.add_argument('--modes',nargs='+',choices=['frames','tiles'],default=['frames','tiles'])
     p.add_argument('--repeat',type=int,default=2)
+    p.add_argument('--adjacent-policy',choices=['overlap_balanced','overlap_ranked'],default='overlap_balanced')
     p.add_argument('--reverse',action='store_true')
     a=p.parse_args()
     if not 1<=a.frames<=72 or a.repeat<1 or any(w<1 for w in a.workers):
@@ -51,7 +52,7 @@ def main():
             if not np.array_equal(lab,reference):raise AssertionError('Identification differs')
             print(f'  identification repeat {repeat+1}/{a.repeat}: {timings[-1]:.3f}s',flush=True)
         t=time.perf_counter()
-        tracked,graph=track_with_graph(lab,rain,adjacent_policy='overlap_balanced',velocity_reset='off',
+        tracked,graph=track_with_graph(lab,rain,adjacent_policy=a.adjacent_policy,velocity_reset='off',
             score_policy='coherent_adjacent',gap_conflict_policy='endpoint_overlap',gap_min_pixels=16,
             family_map_scope='observed')
         tracking_s=time.perf_counter()-t
@@ -62,7 +63,7 @@ def main():
         results.append(dict(mode=mode,workers=workers,identification_seconds=timings,
             median_identification_seconds=statistics.median(timings),tracking_seconds=tracking_s,
             tracked_sha256=digest,labels_graph_ids_equal=True))
-        report=dict(shape=list(rain.shape),results=results,cpu_count=os.cpu_count(),
+        report=dict(shape=list(rain.shape),results=results,cpu_count=os.cpu_count(),adjacent_policy=a.adjacent_policy,
             thread_environment={k:os.environ.get(k) for k in ['VECLIB_MAXIMUM_THREADS',
                 'OPENBLAS_NUM_THREADS','OMP_NUM_THREADS','MKL_NUM_THREADS']},
             elapsed_seconds=time.perf_counter()-began,
