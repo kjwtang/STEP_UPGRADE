@@ -85,10 +85,13 @@ def replay(source, output, pairs, checkpoint_every=0):
         event_policy='overlap' if c.get('event_policy_overlap') else 'score_and_overlap',
         event_min_pixels=int(c.get('event_min_pixels',1)),
         gap_conflict_policy='endpoint_overlap' if c.get('gap_conflict_endpoint_overlap_v1') else 'off',
-        adjacent_policy='overlap_first' if c.get('adjacent_overlap_first_v1') else 'score',
+        adjacent_policy=('overlap_balanced' if c.get('adjacent_overlap_balanced_v2')
+                         else 'overlap_first' if c.get('adjacent_overlap_first_v1') else 'score'),
         velocity_reset=('morphology' if c['velocity_reset_morphology_v1'] else 'off')
                        if 'velocity_reset_morphology_v1' in c else 'auto',
-        score_policy='coherent_adjacent' if c.get('coherent_adjacent_score_v1') else 'legacy')
+        score_policy='coherent_adjacent' if c.get('coherent_adjacent_score_v1') else 'legacy',
+        gap_min_pixels=int(c.get('gap_min_pixels',1)),
+        family_map_scope='observed' if c.get('family_map_observed_v1') else 'global')
     if tracker.state.tracking_config != c:
         raise ValueError('Unsupported saved algorithm/configuration')
     catalog = {int(r['node_id']):r for part in parts for r in read_rows(part/'objects.csv')}
@@ -176,7 +179,10 @@ def replay(source, output, pairs, checkpoint_every=0):
             combined.objects.extend(graph.objects)
             combined.edges.extend(graph.edges)
             combined.events.extend(graph.events)
-            combined.family_map = graph.family_map
+            if tracker.family_map_scope=='global':
+                combined.family_map = graph.family_map
+            else:
+                combined.family_map.update(graph.family_map)
             checked += 1
             if checkpoint_every and checked % checkpoint_every == 0:
                 with timed_stage(label+' checkpoint roundtrip',timings), TemporaryDirectory() as tmp:
@@ -184,6 +190,9 @@ def replay(source, output, pairs, checkpoint_every=0):
                     save_tracking_state(tracker.state, path)
                     tracker.state = load_tracking_state(path)
             print(f'[{checked}/{final.last_time+1}] replay verified', flush=True)
+        if tracker.family_map_scope=='observed':
+            from step.tracking import _find
+            combined.family_map={b:_find(tracker.state.family_parent,b) for b in sorted(combined.family_map)}
         with timed_stage(part.name+' catalog verification',timings), TemporaryDirectory() as tmp:
             tmp = Path(tmp)
             write_graph(combined,tmp)

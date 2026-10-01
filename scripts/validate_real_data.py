@@ -11,6 +11,7 @@ import resource
 import sys
 import os
 import platform
+import hashlib
 
 import numpy as np
 
@@ -28,6 +29,8 @@ def arguments():
     p.add_argument("--time-coordinate", help="Decoded one-dimensional time coordinate, if different from time dimension")
     p.add_argument("--rain-kind", choices=["interval", "rate", "cumulative"], help="interval=mm per interval; rate=mm/h; cumulative requires --wrf-cumulative")
     p.add_argument("--wrf-cumulative", action="store_true", help="Input is a directory of hourly 2-D CSTM RAINNC snapshots; validate and difference adjacent files")
+    p.add_argument('--wrf-time-source',choices=['internal','filename'],default='internal')
+    p.add_argument('--wrf-grid-source',choices=['coordinates','attributes'],default='coordinates')
     p.add_argument("--negative-tolerance-mm",type=float,default=0.,help="Explicit rounding tolerance for tiny negative increments; default rejects any decrease")
     p.add_argument("--units", choices=["mm", "mm/h"], help="Explicit confirmed units, overrides metadata")
     p.add_argument("--dt-hours", type=float, help="Required for NPY or undecodable time; checked against decoded time")
@@ -40,14 +43,17 @@ def arguments():
     p.add_argument("--bridge-radius", type=int, default=9)
     p.add_argument("--min-size", type=int, default=1)
     p.add_argument("--workers", type=int, default=1)
+    p.add_argument('--id-parallel-mode',choices=['frames','tiles'],default='frames')
+    p.add_argument('--family-map-scope',choices=['global','observed'],default='global')
     p.add_argument("--tau", type=float, default=.35)
     p.add_argument("--max-displacement", type=float, default=20., help="Grid cells per frame")
     p.add_argument("--max-gap", type=int, default=1)
+    p.add_argument('--gap-min-pixels',type=int,default=1)
     p.add_argument("--gap-tau", type=float, default=.45)
     p.add_argument("--gap-ambiguity", type=float, default=.05)
     p.add_argument("--gap-conflict-policy", choices=['off', 'endpoint_overlap'], default='off',
                    help="Experimental one-frame gap guard; default preserves baseline")
-    p.add_argument("--adjacent-policy", choices=['score', 'overlap_first'], default='score',
+    p.add_argument("--adjacent-policy", choices=['score', 'overlap_first', 'overlap_balanced'], default='score',
                    help="Experimental strong raw overlap priority; default preserves baseline")
     p.add_argument("--velocity-reset", choices=['auto', 'off', 'morphology'], default='auto',
                    help="auto preserves prior behavior; off isolates overlap policy without velocity resets")
@@ -241,6 +247,10 @@ def provenance(a):
                     slurm_job_id=os.environ.get("SLURM_JOB_ID"),
                     slurm_cpus_per_task=os.environ.get("SLURM_CPUS_PER_TASK"),
                     numpy_version=np.__version__)
+    root=Path(__file__).resolve().parents[1]
+    settings['source_sha256']={name:hashlib.sha256((root/name).read_bytes()).hexdigest()
+        for name in ('step/tracking.py','step/identification.py','scripts/wrf_rain_input.py',
+                     'scripts/validate_real_data.py')}
     try:
         settings["git_commit"] = subprocess.check_output(["git","rev-parse","HEAD"],
             cwd=Path(__file__).resolve().parents[1],text=True).strip()
@@ -299,7 +309,8 @@ def stream_benchmark(a):
     kwargs = dict(tau=a.tau, km=a.max_displacement, max_gap=a.max_gap, gap_tau=a.gap_tau,
                   gap_ambiguity=a.gap_ambiguity,event_overlap=a.event_overlap,sequence_id=a.sequence_id,
                   gap_conflict_policy=a.gap_conflict_policy, adjacent_policy=a.adjacent_policy,
-                  velocity_reset=a.velocity_reset, score_policy=a.score_policy)
+                  velocity_reset=a.velocity_reset, score_policy=a.score_policy, gap_min_pixels=a.gap_min_pixels,
+                  family_map_scope=a.family_map_scope)
     try:
         for offset in range(0,a.hours,a.chunk_frames):
             b = copy.copy(a)
@@ -328,7 +339,8 @@ def stream_benchmark(a):
             print(f"Chunk {offset}:{offset+b.hours}, shape={data.shape}: identification",flush=True)
             progress.update(phase='identification')
             t = time.perf_counter()
-            labels = identify(data,disk(a.bridge_radius),workers=a.workers,threshold=a.threshold,min_size=a.min_size)
+            labels = identify(data,disk(a.bridge_radius),workers=a.workers,threshold=a.threshold,min_size=a.min_size,
+                              parallel_mode=a.id_parallel_mode)
             identify_s = time.perf_counter()-t
             print("Tracking",flush=True)
             t = time.perf_counter()
@@ -459,12 +471,13 @@ def main():
     print("Identifying", data.shape, flush=True)
     valid = np.isfinite(data)
     labels = identify(data, disk(a.bridge_radius), workers=a.workers, threshold=a.threshold,
-                      min_size=a.min_size, valid_mask=valid)
+                      min_size=a.min_size, valid_mask=valid,parallel_mode=a.id_parallel_mode)
     identification_seconds = time.perf_counter()-started
     kwargs = dict(tau=a.tau, km=a.max_displacement, max_gap=a.max_gap, gap_tau=a.gap_tau,
                   gap_ambiguity=a.gap_ambiguity, event_overlap=a.event_overlap, sequence_id=a.sequence_id,
                   gap_conflict_policy=a.gap_conflict_policy, adjacent_policy=a.adjacent_policy,
-                  velocity_reset=a.velocity_reset, score_policy=a.score_policy)
+                  velocity_reset=a.velocity_reset, score_policy=a.score_policy, gap_min_pixels=a.gap_min_pixels,
+                  family_map_scope=a.family_map_scope)
     print("Tracking whole sample", flush=True)
     track_started = time.perf_counter()
     tracked, graph, state = track_with_graph(labels, data, return_state=True, **kwargs)
@@ -484,16 +497,23 @@ def main():
     for start in range(0,len(data),chunk_size):
         stop = min(len(data),start+chunk_size)
         local = identify(data[start:stop], disk(a.bridge_radius), workers=a.workers,
-                         threshold=a.threshold, min_size=a.min_size, valid_mask=valid[start:stop])
+                         threshold=a.threshold, min_size=a.min_size, valid_mask=valid[start:stop],
+                         parallel_mode=a.id_parallel_mode)
         id_equal &= np.array_equal(local, labels[start:stop])
         raster, part, resumed = track_with_graph(local,data[start:stop],state=resumed,return_state=True,**kwargs)
         raster_equal &= np.array_equal(raster, tracked[start:stop])
         combined.objects.extend(part.objects)
         combined.edges.extend(part.edges)
         combined.events.extend(part.events)
-        combined.family_map = part.family_map
+        if a.family_map_scope=='global':
+            combined.family_map = part.family_map
+        else:
+            combined.family_map.update(part.family_map)
         save_tracking_state(resumed, out / "chunk_state.json")
         resumed = load_tracking_state(out / "chunk_state.json")
+    if a.family_map_scope=='observed':
+        from step.tracking import _find
+        combined.family_map={b:_find(resumed.family_parent,b) for b in sorted(combined.family_map)}
     lookup = {n.node_id:n for n in graph.objects}
     comparison_seconds = time.perf_counter()-comparison_started
     checks = {"identification_chunk_equal": bool(id_equal), "branch_raster_chunk_equal": bool(raster_equal),

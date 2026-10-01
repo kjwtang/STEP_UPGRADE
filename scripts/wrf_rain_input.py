@@ -9,12 +9,14 @@ import numpy as np
 import xarray as xr
 
 
-STAMP = re.compile(r"(\d{4}-\d{2}-\d{2})_(\d{2}:\d{2}:\d{2})\.nc$")
+STAMP = re.compile(r"(\d{4}-\d{2}-\d{2})_(\d{2}:\d{2}:\d{2})\.(nc|rain)$")
 
 
-def manifest(directory):
+def manifest(directory, filename_time=False):
     entries = []
-    for path in Path(directory).rglob("cstm_d01_*.nc"):
+    for path in Path(directory).rglob("cstm_d01_*.*"):
+        if path.suffix not in (('.nc','.rain') if filename_time else ('.nc',)):
+            continue
         match = STAMP.search(path.name)
         if not match:
             raise ValueError(f"Unrecognized timestamp filename: {path}")
@@ -39,12 +41,16 @@ def internal_time(ds,path):
 
 
 def read_wrf(a):
-    entries = manifest(a.input)
+    time_source = getattr(a,'wrf_time_source','internal')
+    grid_source = getattr(a,'wrf_grid_source','coordinates')
+    entries = manifest(a.input,filename_time=time_source=='filename')
     if a.inspect:
         print(f"Snapshots: {len(entries)}; possible intervals: {len(entries)-1}")
         print("First:",entries[0],"Last:",entries[-1])
         with xr.open_dataset(entries[0][1]) as ds:
-            print("First internal Times:",internal_time(ds,entries[0][1]))
+            print("Time source:",time_source)
+            if time_source=='internal':
+                print("First internal Times:",internal_time(ds,entries[0][1]))
             print("RAINNC:",ds["RAINNC"].dims,ds["RAINNC"].shape,dict(ds["RAINNC"].attrs))
             print("Source attributes:",dict(ds.attrs))
         return None
@@ -54,6 +60,7 @@ def read_wrf(a):
     if a.start<0 or end>len(entries):
         raise ValueError(f"Need {a.hours+1} snapshots starting at index {a.start}; found {len(entries)}")
     selected = entries[a.start:end]
+    file_stats={p:(p.stat().st_size,p.stat().st_mtime_ns) for _,p in selected}
     times = np.array([t for t,_ in selected])
     intervals = np.diff(times)/np.timedelta64(1,"h")
     if not np.all(intervals==1):
@@ -63,44 +70,58 @@ def read_wrf(a):
     previous = None
     reference_grid = None
     reference_shape = None
+    reference_attributes = None
     source_refs = []
     warnings = []
     rain = None
     tiny_negatives = 0
     for index,(stamp,path) in enumerate(selected):
         with xr.open_dataset(path) as ds:
-            actual = internal_time(ds,path)
-            if actual!=stamp:
-                raise ValueError(f"Filename/Times mismatch: {path.name} has internal Times={actual}; resolve provenance before proceeding")
-            if "RAINNC" not in ds or ds["RAINNC"].dims != ("south_north","west_east"):
+            if time_source=='internal':
+                actual = internal_time(ds,path)
+                if actual!=stamp:
+                    raise ValueError(f"Filename/Times mismatch: {path.name} has internal Times={actual}; resolve provenance before proceeding")
+            if "RAINNC" not in ds:
+                raise ValueError(f'Missing RAINNC: {path}')
+            variable=ds['RAINNC']
+            if variable.dims==('Time','south_north','west_east') and variable.sizes['Time']==1:
+                variable=variable.isel(Time=0)
+            if variable.dims != ("south_north","west_east"):
                 raise ValueError(f"Expected 2-D RAINNC(south_north,west_east): {path}")
             units = a.units or ds["RAINNC"].attrs.get("units","")
             if units.strip().lower()!="mm":
                 raise ValueError(f"RAINNC must be mm: {path}")
-            shape = ds["RAINNC"].shape
+            shape = variable.shape
             if reference_shape is not None and shape!=reference_shape:
                 raise ValueError("Grid shape changes across files")
             reference_shape = shape
             width = a.crop or max(shape)
             y,x = max(0,(shape[0]-width)//2),max(0,(shape[1]-width)//2)
             selection = {"south_north":slice(y,y+width),"west_east":slice(x,x+width)}
-            grid = []
-            for coordinate in ("XLAT","XLONG"):
-                if coordinate not in ds or ds[coordinate].dims != ("south_north","west_east"):
-                    raise ValueError(f"Missing or invalid {coordinate}: {path}")
-                grid.append(ds[coordinate].isel(selection).values)
-            if reference_grid is None:
-                reference_grid = grid
-            elif not all(np.array_equal(v,r,equal_nan=True) for v,r in zip(grid,reference_grid)):
-                raise ValueError(f"Coordinates change across snapshots: {path}")
-            current = np.array(ds["RAINNC"].isel(selection).values,dtype=np.float32,copy=True)
+            if grid_source=='coordinates':
+                grid = []
+                for coordinate in ("XLAT","XLONG"):
+                    if coordinate not in ds or ds[coordinate].dims != ("south_north","west_east"):
+                        raise ValueError(f"Missing or invalid {coordinate}: {path}")
+                    grid.append(ds[coordinate].isel(selection).values)
+                if reference_grid is None:
+                    reference_grid = grid
+                elif not all(np.array_equal(v,r,equal_nan=True) for v,r in zip(grid,reference_grid)):
+                    raise ValueError(f"Coordinates change across snapshots: {path}")
+            else:
+                keys=('DX','DY','MAP_PROJ','CEN_LAT','CEN_LON','TRUELAT1','TRUELAT2',
+                      'STAND_LON','MOAD_CEN_LAT','POLE_LAT','POLE_LON')
+                attributes={k:float(ds.attrs[k]) for k in keys}
+                if not all(np.isfinite(v) for v in attributes.values()):
+                    raise ValueError('Nonfinite grid attributes')
+                if reference_attributes is not None and attributes!=reference_attributes:
+                    raise ValueError('Grid attributes change across snapshots')
+                reference_attributes=attributes
+            current = np.array(variable.isel(selection).values,dtype=np.float32,copy=True)
             if np.any(current[np.isfinite(current)]<0):
                 raise ValueError(f"Negative cumulative rain: {path}")
             source_ref = str(ds.attrs.get("wrfout_ref",""))
             source_refs.append(source_ref)
-            year = str(stamp)[:4]
-            if source_ref and year not in source_ref:
-                warnings.append(f"{path.name}: wrfout_ref does not contain timestamp year {year}: {source_ref}")
         if previous is not None:
             valid = np.isfinite(current)&np.isfinite(previous)
             if not valid.any():
@@ -117,6 +138,8 @@ def read_wrf(a):
                 rain = np.empty((a.hours,*current.shape),dtype=np.float32)
             rain[index-1] = increment
         previous = current
+    if any((p.stat().st_size,p.stat().st_mtime_ns)!=s for p,s in file_stats.items()):
+        raise ValueError('Input changed during read; possible incomplete transfer')
     metadata = dict(source_type="CSTM hourly cumulative RAINNC",source_shape=[len(entries),*reference_shape],
         crop_origin_yx=[y,x],dt_hours=1.,time_verified=True,normalized_units="mm/h",source_units="mm",
         timestamps=[str(t) for t in times[1:]],interval_start_times=[str(t) for t in times[:-1]],
@@ -124,6 +147,10 @@ def read_wrf(a):
         provenance_warnings=warnings,negative_tolerance_mm=a.negative_tolerance_mm,
         tiny_negative_pixels_clipped=tiny_negatives,
         precipitation_scope="Grid-scale RAINNC only; does not include RAINC if parameterized convective rain exists")
+    metadata.update(time_source=time_source,internal_time_verified=time_source=='internal',
+                    filename_time_verified=True,grid_source=grid_source,
+                    coordinates_verified=grid_source=='coordinates',grid_attributes=reference_attributes,
+                    reference_note='wrfout_ref is retained as reference metadata; reference year is not asserted to be the rain year')
     if warnings:
         print("PROVENANCE WARNING:",warnings[0],flush=True)
     return rain,metadata

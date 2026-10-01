@@ -313,7 +313,8 @@ class Tracker:
                  gap_tau=None, gap_ambiguity=0.05, event_overlap=0.10,
                  state=None, sequence_id=None, event_policy='score_and_overlap',
                  event_min_pixels=1, gap_conflict_policy='off', adjacent_policy='score',
-                 velocity_reset='auto', score_policy='legacy'):
+                 velocity_reset='auto', score_policy='legacy', gap_min_pixels=1,
+                 family_map_scope='global'):
         if not 0 <= tau <= 1 or not 0 <= event_overlap <= 1:
             raise ValueError("tau and event_overlap must be in [0, 1]")
         if max_displacement <= 0 or max_gap < 0:
@@ -327,9 +328,15 @@ class Tracker:
             raise ValueError('Experimental gap conflict policy requires max_gap=1')
         self.gap_conflict_policy = gap_conflict_policy
         self.gap_conflicts = []
-        if adjacent_policy not in ('score', 'overlap_first'):
+        if adjacent_policy not in ('score', 'overlap_first', 'overlap_balanced'):
             raise ValueError('Unknown adjacent_policy')
         self.adjacent_policy = adjacent_policy
+        if int(gap_min_pixels) != gap_min_pixels or gap_min_pixels < 1:
+            raise ValueError('gap_min_pixels must be a positive integer')
+        self.gap_min_pixels = int(gap_min_pixels)
+        if family_map_scope not in ('global','observed'):
+            raise ValueError('family_map_scope must be global or observed')
+        self.family_map_scope = family_map_scope
         if score_policy not in ('legacy', 'coherent_adjacent'):
             raise ValueError('Unknown score_policy')
         self.score_policy = score_policy
@@ -366,8 +373,14 @@ class Tracker:
         }
         if gap_conflict_policy != 'off':
             config['gap_conflict_endpoint_overlap_v1'] = 1.0
-        if adjacent_policy != 'score':
+        if adjacent_policy == 'overlap_first':
             config['adjacent_overlap_first_v1'] = 1.0
+        if adjacent_policy == 'overlap_balanced':
+            config['adjacent_overlap_balanced_v2'] = 1.0
+        if self.gap_min_pixels != 1:
+            config['gap_min_pixels'] = float(self.gap_min_pixels)
+        if family_map_scope != 'global':
+            config['family_map_observed_v1'] = 1.0
         if score_policy != 'legacy':
             config['coherent_adjacent_score_v1'] = 1.0
         # Omit when equivalent to the historical policy so old checkpoints
@@ -527,6 +540,16 @@ class Tracker:
     def _event_candidates(self, candidates, parents, children):
         result = []
         for c in candidates:
+            if self.adjacent_policy == 'overlap_balanced':
+                pa = parents[c.parent_index].node.object.area
+                ca = children[c.child_index].area
+                intersection = round(c.raw_iou * (pa+ca) / (1+c.raw_iou))
+                pc,cc = intersection/pa,intersection/ca
+                # Events may contain unequal branches. Keep significant raw
+                # split/merge topology independent of motion scoring.
+                if intersection >= max(16,self.event_min_pixels) and min(pc,cc)>=.15 and max(pc,cc)>=.5:
+                    result.append(c)
+                continue
             if max(c.parent_coverage, c.child_coverage) < self.event_overlap:
                 continue
             if self.event_policy == 'score_and_overlap' and c.score < self.tau:
@@ -541,7 +564,10 @@ class Tracker:
         return result
 
     def _strong_overlap_candidates(self, candidates, parents, children):
-        """Experimental RAW overlap: >=16 pixels, both >=15%, either >=50%.
+        """RAW continuation evidence: >=16 pixels with specified coverages.
+
+        overlap_first requires both >=15%, either >=50%; overlap_balanced
+        requires both >=30%. Split/merge has its own asymmetric overlap rule.
 
         Raw IoU recovers the actual common intersection. Do not mix raw and
         advected coverages here: uncertain velocity must not manufacture rescue
@@ -555,7 +581,9 @@ class Tracker:
             ca = children[c.child_index].area
             intersection = round(c.raw_iou * (pa+ca) / (1+c.raw_iou))
             pc, cc = intersection/pa, intersection/ca
-            if intersection >= 16 and min(pc,cc) >= .15 and max(pc,cc) >= .5:
+            supported = (min(pc,cc) >= .30 if self.adjacent_policy == 'overlap_balanced'
+                         else min(pc,cc) >= .15 and max(pc,cc) >= .5)
+            if intersection >= 16 and supported:
                 result.append(c)
         return result
 
@@ -647,6 +675,8 @@ class Tracker:
         gap_candidates = [
             item for item in self._candidates(dormant, objects, time)
             if 1 < time - dormant[item.parent_index].node.time <= self.max_gap + 1
+            and min(dormant[item.parent_index].node.object.area,
+                    objects[item.child_index].area) >= self.gap_min_pixels
         ]
         if self.gap_conflict_policy == 'endpoint_overlap':
             # Experimental, unadvected evidence. Require the SAME intermediate
@@ -706,6 +736,7 @@ class Tracker:
                                            item, "gap_continue", elapsed - 1))
 
         new_active = []
+        branch_lookup = np.zeros(max(0,int(labeled_map.max())) + 1, dtype=np.int64)
         for ci, obj in enumerate(objects):
             branch = child_branch.get(ci)
             if branch is None:
@@ -730,7 +761,10 @@ class Tracker:
                 node.time, node.node_id, node.branch_id, node.family_id,
                 _object_without_pixels(node.object),
             ))
-            raster[labeled_map == obj.label] = branch
+            branch_lookup[obj.label] = branch
+
+        positive = labeled_map > 0
+        raster[positive] = branch_lookup[labeled_map[positive]]
 
         self.state.active = new_active
         self.state.dormant = [d for i, d in enumerate(dormant)
@@ -743,8 +777,9 @@ class Tracker:
                 self.overlap_decisions.append(dict(time=time,parent_node_id=edge.parent_id,
                     child_node_id=edge.child_id,action='strong_raw_overlap',event=edge.event,
                     score=edge.score,below_tau=edge.score < self.tau,raw_iou=edge.raw_iou))
-        graph.family_map = {b: _find(self.state.family_parent, b)
-                            for b in sorted(self.state.family_parent)}
+        branches = (self.state.family_parent if self.family_map_scope=='global'
+                    else {n.branch_id for n in graph.objects})
+        graph.family_map = {b: _find(self.state.family_parent, b) for b in sorted(branches)}
         for node in graph.objects:
             node.family_id = graph.family_map[node.branch_id]
         return raster, graph
@@ -757,11 +792,14 @@ def track_with_graph(labeled_maps, precip_data, tau=0.35, phi=None, km=20.0,
                      event_policy='score_and_overlap', event_min_pixels=1,
                      progress_callback=None, gap_conflict_policy='off', gap_conflict_callback=None,
                      adjacent_policy='score', overlap_callback=None, velocity_reset='auto',
-                     score_policy='legacy'):
+                     score_policy='legacy', gap_min_pixels=1, family_map_scope='global'):
     """Track a chunk and optionally return resumable state.
 
     ``km`` retains the legacy name and is grid cells per frame. ``phi`` and
-    ``workers`` remain accepted for compatibility. Pass returned state into
+    ``workers`` remain accepted for compatibility; tracking state is sequential.
+    ``family_map_scope='observed'`` emits only branches observed in this call,
+    resolved to the same roots as global mode. Historical branches remain in
+    checkpoint state for later canonical family resolution. Pass state into
     the next chunk/month, or persist it with :func:`save_tracking_state`.
     Optional progress_callback(completed_frames, total_frames) runs after each
     frame in this chunk. It does not indicate that output files have been saved.
@@ -774,7 +812,7 @@ def track_with_graph(labeled_maps, precip_data, tau=0.35, phi=None, km=20.0,
     tracker = Tracker(
         tau, km, max_gap, gap_tau, gap_ambiguity, event_overlap, state,
         sequence_id, event_policy, event_min_pixels, gap_conflict_policy, adjacent_policy,
-        velocity_reset, score_policy
+        velocity_reset, score_policy, gap_min_pixels, family_map_scope
     )
     result, combined = np.zeros(labels.shape, dtype=np.int64), TrackGraph()
     for offset in range(labels.shape[0]):
@@ -787,9 +825,14 @@ def track_with_graph(labeled_maps, precip_data, tau=0.35, phi=None, km=20.0,
         combined.objects.extend(graph.objects)
         combined.edges.extend(graph.edges)
         combined.events.extend(graph.events)
-        combined.family_map = graph.family_map
+        if family_map_scope=='global':
+            combined.family_map = graph.family_map
+        else:
+            combined.family_map.update(graph.family_map)
         if progress_callback is not None:
             progress_callback(offset + 1, labels.shape[0])
+    if family_map_scope=='observed':
+        combined.family_map = {b:_find(tracker.state.family_parent,b) for b in sorted(combined.family_map)}
     if return_state:
         return result, combined, tracker.state
     return result, combined

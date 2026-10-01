@@ -4,6 +4,16 @@ Commit hashes identify reproducible experiments; package version 0.3.0 alone
 does not distinguish experimental revisions. Record `git rev-parse HEAD` with
 each validation run. Do not update a checkout while its run is active.
 
+## Unreleased — balanced v2 and scaling candidate
+
+- Separate balanced continuation evidence from unequal split/merge topology;
+  add explicit gap endpoint size floor. Scientific defaults remain unchanged.
+- Vectorize stable relabel and branch raster construction; add exact halo
+  dilation mode with global connectivity and observed-only family-map output.
+- Stream rain-only hourly filename inputs with explicit grid-attribute checks;
+  record source hashes. Add synthetic topology, seam and checkpoint tests.
+- See `docs/TRACKING_FREEZE_PROTOCOL.md`; real-data v2 validation is pending.
+
 ## Unreleased — coherent adjacent-score experiment
 
 - Opt-in `--score-policy coherent_adjacent`: compare complete stationary and

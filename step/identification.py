@@ -6,6 +6,7 @@ than to an integer label image, so results cannot depend on label values.
 """
 
 import multiprocessing as mp
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 from scipy import ndimage
@@ -27,21 +28,19 @@ def _init_pool(data, structure, min_size, valid):
 
 def _stable_relabel(labels):
     """Relabel objects by their first row-major rain pixel."""
-    present = np.unique(labels)
-    present = present[present > 0]
-    if not len(present):
+    flat = labels.ravel()
+    positions = np.flatnonzero(flat > 0)
+    if not len(positions):
         return np.zeros(labels.shape, dtype=np.int32)
-    ordered = sorted(
-        present.tolist(),
-        key=lambda value: int(np.flatnonzero(labels == value)[0]),
-    )
+    present, first = np.unique(flat[positions], return_index=True)
+    ordered = present[np.argsort(first)]
     lookup = np.zeros(int(labels.max()) + 1, dtype=np.int32)
     for new, old in enumerate(ordered, start=1):
         lookup[old] = new
     return lookup[labels]
 
 
-def _identify_slice(mask, structure, min_size, valid_mask=None):
+def _identify_slice(mask, structure, min_size, valid_mask=None, dilated_mask=None):
     """Join nearby rain pixels while retaining only pixels observed as rain."""
     mask = np.asarray(mask, dtype=bool)
     valid = (
@@ -57,7 +56,8 @@ def _identify_slice(mask, structure, min_size, valid_mask=None):
 
     # Dilating a *binary* mask defines a physically configurable joining gap.
     # Reapplying the original mask prevents artificial rain pixels in output.
-    allowed = ndimage.binary_dilation(mask, structure=structure) & valid
+    allowed = (ndimage.binary_dilation(mask, structure=structure)
+               if dilated_mask is None else dilated_mask) & valid
     # Propagation through the valid part of the dilated region prevents a
     # footprint from jumping across a missing-data barrier.
     joined = ndimage.binary_propagation(
@@ -83,6 +83,15 @@ def _identify_index(index):
     return _identify_slice(_DATA[index] > 0, _STRUCTURE, _MIN_SIZE, valid)
 
 
+def _dilate_rows(task):
+    """Halo is used for dilation only; connectivity is resolved globally."""
+    mask,structure,start,stop = task
+    halo = structure.shape[0]//2
+    low,high=max(0,start-halo),min(mask.shape[0],stop+halo)
+    local=ndimage.binary_dilation(mask[low:high],structure=structure)
+    return start,stop,local[start-low:stop-low]
+
+
 def identify(
     data,
     morph_structure=None,
@@ -91,6 +100,7 @@ def identify(
     chunksize=1,
     threshold=0.0,
     valid_mask=None,
+    parallel_mode='frames',
 ):
     """Identify 2-D precipitation objects independently at each timestep.
 
@@ -104,6 +114,8 @@ def identify(
         raise ValueError("data must have shape (time, y, x)")
     if workers < 1:
         raise ValueError("workers must be at least one")
+    if parallel_mode not in ('frames','tiles'):
+        raise ValueError('parallel_mode must be frames or tiles')
     if min_size < 1:
         raise ValueError("min_size must be at least one")
     if threshold < 0:
@@ -122,7 +134,20 @@ def identify(
         raise ValueError("morph_structure must be a non-empty 2-D array")
 
     count = data.shape[0]
-    if workers == 1 or count < 2:
+    if parallel_mode=='tiles' and workers>1:
+        frames=[]
+        boundaries=np.linspace(0,data.shape[1],min(workers,data.shape[1])+1,dtype=int)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            for i in range(count):
+                if not rain[i].any():
+                    frames.append(np.zeros(rain[i].shape,dtype=np.int32))
+                    continue
+                dilated=np.empty(rain[i].shape,dtype=bool)
+                tasks=[(rain[i],structure,int(a),int(b)) for a,b in zip(boundaries[:-1],boundaries[1:])]
+                for start,stop,local in pool.map(_dilate_rows,tasks):
+                    dilated[start:stop]=local
+                frames.append(_identify_slice(rain[i],structure,min_size,valid[i],dilated))
+    elif workers == 1 or count < 2:
         frames = [
             _identify_slice(rain[i], structure, min_size, valid[i])
             for i in range(count)
