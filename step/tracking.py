@@ -282,12 +282,17 @@ def _union(parent: Dict[int, int], values: Iterable[int]) -> int:
 def _pixel_overlap(previous, current, shift=(0, 0)):
     p = {(y + shift[0], x + shift[1]) for y, x in previous.pixels}
     c = set(current.pixels)
+    return _set_overlap(p, c, previous.area, current.area)
+
+
+def _set_overlap(p, c, previous_area, current_area):
+    """Exact overlap of already materialized masks; no persistent cache."""
     intersection = len(p & c)
     union = len(p) + len(c) - intersection
     return (
         intersection / float(union) if union else 1.0,
-        intersection / float(previous.area),
-        intersection / float(current.area),
+        intersection / float(previous_area),
+        intersection / float(current_area),
     )
 
 
@@ -405,6 +410,9 @@ class Tracker:
         radii = np.linalg.norm((boxes[:, :, 1] - boxes[:, :, 0]) / 2, axis=1)
         overlap_tree = cKDTree(centres)
         output = []
+        # Construct each child set only if a spatial candidate needs it. Reuse
+        # it across parents, and reuse each translated parent across children.
+        child_sets = {}
         for pi, terminal in enumerate(parents):
             dt = time - terminal.node.time
             vy, vx = self._velocity(terminal)
@@ -424,12 +432,24 @@ class Tracker:
                     if np.all(np.minimum(moved[:, 1], boxes[ci, :, 1]) >
                               np.maximum(moved[:, 0], boxes[ci, :, 0])):
                         overlap_indices.add(ci)
-            for ci in sorted(proximity | overlap_indices):
+            indices = sorted(proximity | overlap_indices)
+            if not indices:
+                continue
+            parent_pixels = set(terminal.node.object.pixels)
+            moved_pixels = ({(y + shift[0], x + shift[1]) for y, x in parent_pixels}
+                            if shift != (0, 0) else parent_pixels)
+            for ci in indices:
                 child = children[ci]
                 distance = float(np.hypot(child.centroid[0] - predicted[0],
                                           child.centroid[1] - predicted[1]))
-                raw_iou, raw_pc, raw_cc = _pixel_overlap(terminal.node.object, child)
-                adv_iou, adv_pc, adv_cc = _pixel_overlap(terminal.node.object, child, shift)
+                if ci not in child_sets:
+                    child_sets[ci] = set(child.pixels)
+                pixels = child_sets[ci]
+                raw_iou, raw_pc, raw_cc = _set_overlap(parent_pixels, pixels,
+                                                      terminal.node.object.area, child.area)
+                adv_iou, adv_pc, adv_cc = (_set_overlap(moved_pixels, pixels,
+                    terminal.node.object.area, child.area) if shift != (0, 0)
+                    else (raw_iou, raw_pc, raw_cc))
                 # Box intersection alone never admits a distant candidate.
                 coverage = max(raw_pc, raw_cc, adv_pc, adv_cc)
                 if ci not in proximity and not (coverage > 0 and coverage >= self.event_overlap):

@@ -12,6 +12,21 @@ each validation run. Do not update a checkout while its run is active.
 - Checkpoint guards and replay diagnostics support the policy. This is an
   uncalibrated experiment; maximum-over-hypotheses may increase false links.
 
+## Unreleased — full-grid local validation and overlap reuse
+
+- Reuse exact child pixel sets and translated parent sets within each candidate
+  pass. No persistent cache or score/threshold change. The 1996 June 72-frame
+  candidate replay retains identical rasters, catalogs, scores and checkpoints.
+- Local single-run tracking time fell from 68.14 to 25.86 seconds; total time
+  from 98.27 to 55.42 seconds on a 1749-by-2049 grid with two ID workers.
+  These timings exclude RAINNC conversion and are not a controlled RCC benchmark.
+- Stream comparison now requires explicit focus pairs; historical node IDs are
+  no longer silently applied to unrelated datasets. Replay can verify an
+  alternate checkpoint schedule with `--checkpoint-every` and `--no-focus`.
+- Add bounded RAINNC-only preparation using hourly filename timestamps. Internal
+  time and coordinate arrays are optional for grid-space validation. Inputs
+  remain read-only; missing files, grid changes and accumulation decreases fail.
+
 ## d86d4cd — replay performance and observability
 
 - Replace the diagnostic duplicate full-frame candidate pass with requested

@@ -27,6 +27,12 @@ def test_reference_reports_partial_recovery(tmp_path):
     assert len(recovery['recovered_pairs'])==1
     assert len(recovery['still_missing_pairs'])==1
     assert not recovery['newly_missing_pairs']
+    focused=compare(tmp_path/'before',tmp_path/'after',tmp_path/'focused',
+                    focus_pairs=[(1,2)])
+    assert focused['focus_pairs'][0]['object_pair']==(0,1,1,1)
+    with pytest.raises(ValueError,match='forward in time'):
+        compare(tmp_path/'before',tmp_path/'after',tmp_path/'backward',focus_pairs=[(2,1)])
+    assert not (tmp_path/'backward').exists()
 
 
 @pytest.mark.parametrize('guard',['off','endpoint_overlap'])
@@ -52,14 +58,16 @@ def test_replay_saved_statistics_exact_and_reject_changed_mask(tmp_path,guard,ad
         save_tracking_state(state,part/'state.json')
         np.save(part/'identified_labels.npy',lab[i:i+1])
         np.save(part/'tracked_labels.npy',tracked)
-    report=replay(source,tmp_path/'out',[(1,2),(2,3)])
+    report=replay(source,tmp_path/'out',[(1,2),(2,3)],checkpoint_every=2)
     assert report['replay_equal']
     assert report['frames_replayed']==3
+    assert report['checkpoint_every']==2
     assert all(r['decision']==('accepted' if adjacent=='overlap_first' else 'below_score_threshold')
                for r in report['pairs'])
     assert bool(report['gap_conflicts'])==(guard!='off' and adjacent=='score')
     comparison=compare(source,source,tmp_path/'comparison',reference=source)
     assert comparison['added']==comparison['removed']==comparison['changed_event']==0
+    assert comparison['focus_pairs']==[]
     assert comparison['reference_recovery']['previously_missing_continue']==0
     np.save(source/'chunk_000002'/'tracked_labels.npy',np.zeros_like(lab[:1]))
     with pytest.raises(ValueError,match='Raster replay mismatch'):

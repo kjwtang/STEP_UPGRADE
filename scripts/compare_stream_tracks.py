@@ -5,7 +5,7 @@ from collections import Counter
 import json
 from pathlib import Path
 import numpy as np
-from replay_stream_pairs import read_rows, DEFAULT_PAIRS
+from replay_stream_pairs import read_rows
 
 
 def read_catalog(root):
@@ -33,7 +33,7 @@ def read_catalog(root):
     return identities, measurements, edges
 
 
-def compare(before, after, output, reference=None):
+def compare(before, after, output, reference=None, focus_pairs=()):
     if output.exists():
         raise FileExistsError(output)
     ids, old_objects, old = read_catalog(before)
@@ -52,11 +52,14 @@ def compare(before, after, output, reference=None):
     changed = [dict(pair=k,before=old[k],after=new[k]) for k in sorted(old.keys() & new.keys())
                if old[k]!=new[k]]
     focus=[]
-    for p,c in DEFAULT_PAIRS:
-        if p in ids and c in ids:
-            key=ids[p]+ids[c]
-            focus.append(dict(source_node_pair=[p,c],object_pair=key,
-                              before=old.get(key),after=new.get(key)))
+    for p,c in focus_pairs:
+        if p not in ids or c not in ids:
+            raise ValueError(f'Missing focus pair {p}:{c} in before run')
+        key=ids[p]+ids[c]
+        if key[2] <= key[0]:
+            raise ValueError('Focus pair must move forward in time')
+        focus.append(dict(source_node_pair=[p,c],object_pair=key,
+                          before=old.get(key),after=new.get(key)))
     summary=dict(identification_and_measurements_equal=True,
         before=str(before.resolve()),after=str(after.resolve()),
         before_edges=len(old),after_edges=len(new),added=len(added),removed=len(removed),
@@ -95,5 +98,7 @@ if __name__=='__main__':
     p.add_argument('after',type=Path)
     p.add_argument('--output-dir',type=Path,required=True)
     p.add_argument('--reference',type=Path,help='Optional original baseline to quantify recovery of missing continue edges')
+    p.add_argument('--focus-pair',action='append',default=[],help='Explicit before-run parent:child node IDs; repeatable, no cross-dataset defaults')
     a=p.parse_args()
-    compare(a.before,a.after,a.output_dir,a.reference)
+    compare(a.before,a.after,a.output_dir,a.reference,
+            [tuple(map(int,pair.split(':'))) for pair in a.focus_pair])

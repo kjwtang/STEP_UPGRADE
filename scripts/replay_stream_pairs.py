@@ -16,7 +16,7 @@ import time
 from unittest.mock import patch
 
 import numpy as np
-from step.tracking import Tracker, StormObject, TrackGraph, load_tracking_state, _pixel_overlap
+from step.tracking import Tracker, StormObject, TrackGraph, load_tracking_state, save_tracking_state, _pixel_overlap
 from diagnose_tracking import evidence
 from run_npy_validation import write_graph
 
@@ -69,7 +69,9 @@ def restore_objects(labels, rows):
     return result
 
 
-def replay(source, output, pairs):
+def replay(source, output, pairs, checkpoint_every=0):
+    if checkpoint_every < 0:
+        raise ValueError('checkpoint_every must be nonnegative')
     if output.exists():
         raise FileExistsError(output)
     parts = sorted(source.glob('chunk_*'))
@@ -176,6 +178,11 @@ def replay(source, output, pairs):
             combined.events.extend(graph.events)
             combined.family_map = graph.family_map
             checked += 1
+            if checkpoint_every and checked % checkpoint_every == 0:
+                with timed_stage(label+' checkpoint roundtrip',timings), TemporaryDirectory() as tmp:
+                    path = Path(tmp)/'state.json'
+                    save_tracking_state(tracker.state, path)
+                    tracker.state = load_tracking_state(path)
             print(f'[{checked}/{final.last_time+1}] replay verified', flush=True)
         with timed_stage(part.name+' catalog verification',timings), TemporaryDirectory() as tmp:
             tmp = Path(tmp)
@@ -184,6 +191,7 @@ def replay(source, output, pairs):
                 if (tmp/name).read_bytes() != (part/name).read_bytes():
                     raise ValueError(f'Graph replay mismatch: {part.name}/{name}')
     report = dict(replay_equal=True,frames_replayed=checked,tracking_config=c,
+                  checkpoint_every=checkpoint_every,
                   pairs=decisions,gap_conflicts=conflicts,stage_timings=timings,
                   note='Saved statistics/mask replay, not independent ingestion validation. Outside-gate scores are counterfactual; reasons are pair-level, not causal attribution.')
     output.mkdir(parents=True)
@@ -205,6 +213,8 @@ if __name__ == '__main__':
     parser.add_argument('source',type=Path)
     parser.add_argument('--output-dir',required=True,type=Path)
     parser.add_argument('--pair',action='append',help='Parent:child node IDs; repeatable')
+    parser.add_argument('--no-focus',action='store_true',help='Replay all frames without historical case-specific focus pairs')
+    parser.add_argument('--checkpoint-every',type=int,default=0,help='Roundtrip state every N frames to verify another checkpoint boundary schedule')
     args = parser.parse_args()
-    pairs = [tuple(map(int,p.split(':'))) for p in args.pair] if args.pair else DEFAULT_PAIRS
-    replay(args.source,args.output_dir,pairs)
+    pairs = [tuple(map(int,p.split(':'))) for p in args.pair] if args.pair else ([] if args.no_focus else DEFAULT_PAIRS)
+    replay(args.source,args.output_dir,pairs,args.checkpoint_every)
