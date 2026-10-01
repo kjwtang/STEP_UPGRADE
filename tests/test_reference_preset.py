@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import numpy as np
 from step.identification import identify
-from step.tracking import track_with_graph
+from step.tracking import Tracker,track_with_graph
 
 
 def test_frozen_reference_preset_is_executable_and_keeps_gap_identity():
@@ -17,7 +17,10 @@ def test_frozen_reference_preset_is_executable_and_keeps_gap_identity():
     labels=identify(rain,x*x+y*y<=radius*radius,
         threshold=preset['identification']['threshold_mm_h'],
         min_size=preset['identification']['min_size_cells'])
-    tracked,graph,state=track_with_graph(labels,rain,return_state=True,**preset['tracking'])
+    Tracker(**preset['tracking'])
+    kwargs=dict(preset['tracking'])
+    kwargs['km']=kwargs.pop('max_displacement')
+    tracked,graph,state=track_with_graph(labels,rain,return_state=True,**kwargs)
     assert tracked[0,25,25]==tracked[1,25,25]==tracked[3,25,25]>0
     assert [e.event for e in graph.edges]==['continue','gap_continue']
     assert state.tracking_config['adjacent_overlap_ranked_v2']==1

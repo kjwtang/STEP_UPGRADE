@@ -8,8 +8,16 @@ remain unchanged; activate this reference explicitly.
 
 Core commit: `daf70111e76fecfd90db69afb1aeeb8634526836`.
 Preset: [rainfall_lineage_4km_1h_reference_v1.json](../configs/rainfall_lineage_4km_1h_reference_v1.json).
-Its `tracking` dictionary can be passed to `Tracker` or `track_with_graph`;
-identification and input-contract fields are separate, not tracker arguments.
+Its `tracking` dictionary can be passed directly to `Tracker`. For the legacy
+`track_with_graph` wrapper, rename `max_displacement` to `km`; the wrapper's
+`km` parameter is still in **grid cells**, despite its historical name.
+Identification and input-contract fields are separate, not tracker arguments.
+
+```python
+kwargs = dict(preset["tracking"])
+kwargs["km"] = kwargs.pop("max_displacement")
+tracked, graph = track_with_graph(labels, rain_mm_h, **kwargs)
+```
 
 ## Frozen order
 
@@ -149,6 +157,11 @@ grid attributes do not verify geographic placement. Validate a coordinate refere
 against this full-grid shape/projection before geographical analysis. Reference
 coordinate year and rainfall year need not be equal. Do not silently mix climate
 members or reset sequence identifiers when handing over checkpoints.
+Include the identification/reference version in the sequence namespace. The
+tracker's checkpoint guard validates tracking parameters, grid shape and sequence
+name, not the upstream identification threshold or geographic projection by
+itself. Resume only with the same ingestion, grid and identification contract;
+changing those upstream settings requires a separately named experiment.
 
 Branch IDs persist through continuation; events create new branches. Family roots
 can change on later merges, so use namespace + branch ID for immutable branch keys,
