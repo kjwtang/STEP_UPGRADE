@@ -328,7 +328,7 @@ class Tracker:
             raise ValueError('Experimental gap conflict policy requires max_gap=1')
         self.gap_conflict_policy = gap_conflict_policy
         self.gap_conflicts = []
-        if adjacent_policy not in ('score', 'overlap_first', 'overlap_balanced'):
+        if adjacent_policy not in ('score', 'overlap_first', 'overlap_balanced', 'overlap_ranked'):
             raise ValueError('Unknown adjacent_policy')
         self.adjacent_policy = adjacent_policy
         if int(gap_min_pixels) != gap_min_pixels or gap_min_pixels < 1:
@@ -377,6 +377,8 @@ class Tracker:
             config['adjacent_overlap_first_v1'] = 1.0
         if adjacent_policy == 'overlap_balanced':
             config['adjacent_overlap_balanced_v2'] = 1.0
+        if adjacent_policy == 'overlap_ranked':
+            config['adjacent_overlap_ranked_v1'] = 1.0
         if self.gap_min_pixels != 1:
             config['gap_min_pixels'] = float(self.gap_min_pixels)
         if family_map_scope != 'global':
@@ -540,7 +542,7 @@ class Tracker:
     def _event_candidates(self, candidates, parents, children):
         result = []
         for c in candidates:
-            if self.adjacent_policy == 'overlap_balanced':
+            if self.adjacent_policy in ('overlap_balanced','overlap_ranked'):
                 pa = parents[c.parent_index].node.object.area
                 ca = children[c.child_index].area
                 intersection = round(c.raw_iou * (pa+ca) / (1+c.raw_iou))
@@ -581,9 +583,45 @@ class Tracker:
             ca = children[c.child_index].area
             intersection = round(c.raw_iou * (pa+ca) / (1+c.raw_iou))
             pc, cc = intersection/pa, intersection/ca
-            supported = (min(pc,cc) >= .30 if self.adjacent_policy == 'overlap_balanced'
+            supported = (min(pc,cc) >= .30 if self.adjacent_policy in ('overlap_balanced','overlap_ranked')
                          else min(pc,cc) >= .15 and max(pc,cc) >= .5)
             if intersection >= 16 and supported:
+                result.append(c)
+        return result
+
+    def _ranked_overlap_candidates(self, candidates, parents, children):
+        """Mutual dominant RAW intersection, not a global score relaxation.
+
+        Rank against every raw-overlapping candidate before reserving endpoints.
+        Both endpoint coverages must be >=15%, intersection >=16 pixels, and
+        each endpoint's best intersection >=2x its runner-up. Ties reject.
+        Event topology still uses balanced-v2 rules and is consumed first.
+        """
+        if self.adjacent_policy != 'overlap_ranked':
+            return []
+        by_parent,by_child={},{}
+        ranked=[]
+        for c in candidates:
+            pa=parents[c.parent_index].node.object.area
+            ca=children[c.child_index].area
+            intersection=round(c.raw_iou*(pa+ca)/(1+c.raw_iou))
+            if not intersection:
+                continue
+            entry=(intersection,c)
+            by_parent.setdefault(c.parent_index,[]).append(entry)
+            by_child.setdefault(c.child_index,[]).append(entry)
+            ranked.append(entry)
+        def dominant(values,c):
+            values=sorted(values,key=lambda v:v[0],reverse=True)
+            best=values[0]
+            return (best[1] is c and (len(values)==1 or
+                    best[0]>values[1][0] and best[0]>=2*values[1][0]))
+        result=[]
+        for intersection,c in ranked:
+            pa=parents[c.parent_index].node.object.area
+            ca=children[c.child_index].area
+            if (intersection>=16 and min(intersection/pa,intersection/ca)>=.15 and
+                dominant(by_parent[c.parent_index],c) and dominant(by_child[c.child_index],c)):
                 result.append(c)
         return result
 
@@ -656,6 +694,18 @@ class Tracker:
             used_p.add(item.parent_index)
             used_c.add(item.child_index)
             graph.edges.append(self._edge(time, parent, node_ids[item.child_index], item, 'continue'))
+
+        ranked = self._ranked_overlap_candidates(candidates, active, objects)
+        accepted_ranked=[]
+        for item in ranked:
+            if item.parent_index in used_p or item.child_index in used_c:
+                continue
+            parent=active[item.parent_index]
+            child_branch[item.child_index]=parent.node.branch_id
+            child_parent[item.child_index]=parent
+            used_p.add(item.parent_index);used_c.add(item.child_index)
+            accepted_ranked.append(item)
+            graph.edges.append(self._edge(time,parent,node_ids[item.child_index],item,'continue'))
 
         remaining_p = [i for i in range(len(active)) if i not in used_p]
         remaining_c = [i for i in range(len(objects)) if i not in used_c]
@@ -772,10 +822,15 @@ class Tracker:
                               time - d.node.time <= self.max_gap]
         self.state.last_time = time
         strong_keys = {(active[c.parent_index].node.node_id,node_ids[c.child_index]) for c in strong}
+        ranked_keys = {(active[c.parent_index].node.node_id,node_ids[c.child_index]) for c in accepted_ranked}
         for edge in graph.edges:
             if (edge.parent_id,edge.child_id) in strong_keys:
                 self.overlap_decisions.append(dict(time=time,parent_node_id=edge.parent_id,
                     child_node_id=edge.child_id,action='strong_raw_overlap',event=edge.event,
+                    score=edge.score,below_tau=edge.score < self.tau,raw_iou=edge.raw_iou))
+            elif (edge.parent_id,edge.child_id) in ranked_keys:
+                self.overlap_decisions.append(dict(time=time,parent_node_id=edge.parent_id,
+                    child_node_id=edge.child_id,action='mutual_dominant_raw_overlap',event=edge.event,
                     score=edge.score,below_tau=edge.score < self.tau,raw_iou=edge.raw_iou))
         branches = (self.state.family_parent if self.family_map_scope=='global'
                     else {n.branch_id for n in graph.objects})

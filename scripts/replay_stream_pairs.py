@@ -85,7 +85,8 @@ def replay(source, output, pairs, checkpoint_every=0):
         event_policy='overlap' if c.get('event_policy_overlap') else 'score_and_overlap',
         event_min_pixels=int(c.get('event_min_pixels',1)),
         gap_conflict_policy='endpoint_overlap' if c.get('gap_conflict_endpoint_overlap_v1') else 'off',
-        adjacent_policy=('overlap_balanced' if c.get('adjacent_overlap_balanced_v2')
+        adjacent_policy=('overlap_ranked' if c.get('adjacent_overlap_ranked_v1')
+                         else 'overlap_balanced' if c.get('adjacent_overlap_balanced_v2')
                          else 'overlap_first' if c.get('adjacent_overlap_first_v1') else 'score'),
         velocity_reset=('morphology' if c['velocity_reset_morphology_v1'] else 'off')
                        if 'velocity_reset_morphology_v1' in c else 'auto',

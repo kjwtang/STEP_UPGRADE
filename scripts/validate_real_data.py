@@ -53,7 +53,7 @@ def arguments():
     p.add_argument("--gap-ambiguity", type=float, default=.05)
     p.add_argument("--gap-conflict-policy", choices=['off', 'endpoint_overlap'], default='off',
                    help="Experimental one-frame gap guard; default preserves baseline")
-    p.add_argument("--adjacent-policy", choices=['score', 'overlap_first', 'overlap_balanced'], default='score',
+    p.add_argument("--adjacent-policy", choices=['score', 'overlap_first', 'overlap_balanced','overlap_ranked'], default='score',
                    help="Experimental strong raw overlap priority; default preserves baseline")
     p.add_argument("--velocity-reset", choices=['auto', 'off', 'morphology'], default='auto',
                    help="auto preserves prior behavior; off isolates overlap policy without velocity resets")
