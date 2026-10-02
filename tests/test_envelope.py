@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from step.envelope import identify_envelope
+from step.envelope import identify_envelope, expand_seeded_envelope
 
 pytest.importorskip('skimage', reason='Install the envelope extra for experimental tests')
 
@@ -130,3 +130,38 @@ def test_statistics_many_to_many_disconnected_seed():
     rows,members=envelope_statistics(rain,cores,env)
     assert len(rows)==len(members)==2
     assert {m['core_label'] for m in members}=={1}
+
+
+@pytest.mark.parametrize('mode', ['partition', 'system'])
+@pytest.mark.parametrize('connectivity', [4, 8])
+def test_reusing_seeds_matches_identification_path_and_does_not_mutate(mode, connectivity):
+    rain = np.full((7, 12), .2)
+    rain[2, 2], rain[4, 9] = 2, 3
+    rain[:, 6] = np.nan
+    cores, old = identify_envelope(rain, mode=mode, connectivity=connectivity)
+    original = cores.copy()
+    new = expand_seeded_envelope(rain, cores, mode=mode, connectivity=connectivity)
+    np.testing.assert_array_equal(old, new)
+    np.testing.assert_array_equal(original, cores)
+    bounded = expand_seeded_envelope(rain, cores, mode=mode, connectivity=connectivity,
+                                    max_distance_km=2, spacing_km=(1, 1))
+    _, previous = identify_envelope(rain, mode=mode, connectivity=connectivity,
+                                   max_distance_km=2, spacing_km=(1, 1))
+    np.testing.assert_array_equal(bounded, previous)
+
+
+def test_reusing_noncontiguous_seed_labels_and_invalid_seeds():
+    rain = np.array([[2., .2, 3.], [0., np.nan, .2]])
+    seeds = np.array([[7, 0, 42], [0, 0, 0]], dtype=np.int32)
+    old = seeds.copy()
+    extent = expand_seeded_envelope(rain, seeds)
+    assert set(np.unique(extent)) == {0, 7, 42}
+    np.testing.assert_array_equal(extent[seeds > 0], seeds[seeds > 0])
+    np.testing.assert_array_equal(seeds, old)
+    with pytest.raises(ValueError, match='seed pixel'):
+        expand_seeded_envelope(rain, np.ones_like(seeds))
+    with pytest.raises(ValueError, match='nonnegative'):
+        expand_seeded_envelope(rain, seeds.astype(float))
+    seeds[0, 0] = -1
+    with pytest.raises(ValueError, match='nonnegative'):
+        expand_seeded_envelope(rain, seeds)

@@ -17,6 +17,55 @@ def area_weights(cell_area_km2, shape):
     return np.broadcast_to(area, shape)
 
 
+def expand_seeded_envelope(data, cores, envelope_threshold=.1, mode='partition',
+                           connectivity=8, max_distance_km=None, spacing_km=None):
+    """Expand immutable, already identified seeds without rerunning identification.
+
+    Partition preserves seed label values (including noncontiguous values).
+    System labels instead denote wet connected components, not storm IDs.
+    This function performs no tracking and never changes the caller's seeds.
+    Distance caps, if requested, measure distance to ANY seed before segmentation.
+    Assigned support and nonseed ownership should be checked separately from
+    seed identity when comparing extents at different thresholds.
+    """
+    data, cores = np.asarray(data), np.asarray(cores)
+    if (data.ndim != 2 or cores.shape != data.shape or
+            not np.issubdtype(cores.dtype, np.integer) or np.any(cores < 0) or
+            np.max(cores, initial=0) > np.iinfo(np.int32).max):
+        raise ValueError('Require matching 2-D data and nonnegative int32-range seed labels')
+    if not np.isfinite(envelope_threshold) or envelope_threshold <= 0:
+        raise ValueError('Require a positive finite envelope threshold')
+    if mode not in ('partition', 'system') or connectivity not in (4, 8):
+        raise ValueError('Invalid mode or connectivity')
+    valid = np.isfinite(data)
+    wet = valid & (data >= envelope_threshold)
+    if np.any((cores > 0) & ~wet):
+        raise ValueError('Every seed pixel must be finite and meet the envelope threshold')
+    if max_distance_km is not None:
+        spacing = np.asarray(spacing_km, dtype=float)
+        if (not np.isfinite(max_distance_km) or max_distance_km < 0 or
+                spacing.shape != (2,) or not np.all(np.isfinite(spacing) & (spacing > 0))):
+            raise ValueError('Nonnegative distance cap requires positive (dy, dx) spacing_km')
+    footprint = ndimage.generate_binary_structure(2, 1 if connectivity == 4 else 2)
+    if not cores.any():
+        return np.zeros(data.shape, dtype=np.int32)
+    if max_distance_km is not None:
+        wet &= ndimage.distance_transform_edt(cores == 0, sampling=spacing) <= max_distance_km
+    if mode == 'system':
+        components, _ = ndimage.label(wet, footprint)
+        seeded = np.unique(components[cores > 0])
+        lookup = np.zeros(int(components.max()) + 1, dtype=np.int32)
+        lookup[seeded] = np.arange(1, len(seeded) + 1)
+        return lookup[components]
+    try:
+        from skimage.segmentation import watershed
+    except ImportError as exc:
+        raise ImportError('Partition experiments require pip install -e ".[envelope]"') from exc
+    surface = -np.where(valid, data, 0).astype(np.float64)
+    return watershed(surface, markers=cores, mask=wet,
+                     connectivity=footprint).astype(np.int32)
+
+
 def identify_envelope(data, core_threshold=1.0, envelope_threshold=.1,
                       mode='partition', min_core_cells=1, connectivity=8,
                       morph_structure=None, min_core_area_km2=None,
@@ -76,21 +125,5 @@ def identify_envelope(data, core_threshold=1.0, envelope_threshold=.1,
         lookup = np.zeros(int(cores.max()) + 1, dtype=np.int32)
         lookup[ids] = np.arange(1, len(ids) + 1)
         cores = lookup[cores]
-    wet = valid & (data >= envelope_threshold)
-    if not cores.any():
-        return cores, np.zeros(data.shape,dtype=np.int32)
-    if max_distance_km is not None:
-        wet &= ndimage.distance_transform_edt(cores == 0, sampling=spacing) <= max_distance_km
-    if mode == 'system':
-        components, _ = ndimage.label(wet, footprint)
-        seeded = np.unique(components[cores > 0])
-        lookup = np.zeros(int(components.max())+1,dtype=np.int32)
-        lookup[seeded] = np.arange(1,len(seeded)+1)
-        return cores, lookup[components]
-    try:
-        from skimage.segmentation import watershed
-    except ImportError as exc:
-        raise ImportError('Partition experiments require pip install -e ".[envelope]"') from exc
-    surface = -np.where(valid, data, 0).astype(np.float64)
-    envelopes = watershed(surface, markers=cores, mask=wet, connectivity=footprint)
-    return cores, envelopes.astype(np.int32)
+    return cores, expand_seeded_envelope(data, cores, envelope_threshold, mode,
+        connectivity, max_distance_km, spacing_km)
