@@ -39,6 +39,31 @@ def frame_hashes(root, key):
     return hashes
 
 
+def input_identity(root):
+    """Saved time/grid/unit contract, not an independent raw-input checksum."""
+    parts = sorted(root.glob('chunk_*'))
+    timestamps = []
+    reference = None
+    for part in parts:
+        meta = json.loads((part / 'metadata.json').read_text())
+        current = {key: meta.get(key) for key in
+                   ('dt_hours', 'normalized_units', 'grid_attributes', 'crop_origin_yx')}
+        if reference is None:
+            reference = current
+        elif current != reference:
+            raise ValueError('Saved input contract changed between chunks')
+        stamps = meta.get('timestamps')
+        if stamps is None:
+            timestamps = None
+        elif timestamps is not None:
+            timestamps.extend(stamps)
+    state = load_tracking_state(parts[-1] / 'state.json')
+    reference['processed_grid_shape'] = list(state.grid_shape)
+    if timestamps is not None and len(timestamps) != state.last_time + 1:
+        raise ValueError('Saved timestamps do not cover the complete stream extent')
+    return dict(grid=reference, timestamps=timestamps)
+
+
 def inspect(root):
     if not (root / 'SUCCESS').exists():
         raise ValueError(f'Incomplete stream: {root}')
@@ -121,10 +146,19 @@ def audit(source, output, reference=None, prefix_reference=None):
     if output.exists():
         raise FileExistsError(output)
     summary, objects, edges, events, roots = inspect(source)
+    identity = input_identity(source)
     if reference is not None:
         other, o, e, v, r = inspect(reference)
+        other_identity = input_identity(reference)
+        if identity['grid'] != other_identity['grid']:
+            raise ValueError('Reference saved grid/units/cadence differs')
+        time_equal = (None if identity['timestamps'] is None or other_identity['timestamps'] is None
+                      else identity['timestamps'] == other_identity['timestamps'])
+        if time_equal is False:
+            raise ValueError('Reference saved timestamps differ')
         checks = dict(canonical_objects_equal=objects == o, full_edges_and_scores_equal=edges == e,
-            events_equal=events == v, final_family_roots_equal=roots == r)
+            events_equal=events == v, final_family_roots_equal=roots == r,
+            saved_grid_units_cadence_equal=True, saved_timestamps_equal=time_equal)
         for key in ('identified_frame_sha256', 'tracked_frame_sha256'):
             left, right = frame_hashes(source, key), frame_hashes(reference, key)
             checks[key + '_equal'] = None if left is None or right is None else left == right
@@ -134,6 +168,12 @@ def audit(source, output, reference=None, prefix_reference=None):
         summary['reference_structure'] = other
     if prefix_reference is not None:
         other, *_ = inspect(prefix_reference)
+        prefix = input_identity(prefix_reference)
+        if identity['grid'] != prefix['grid']:
+            raise ValueError('Prefix saved grid/units/cadence differs')
+        if identity['timestamps'] is not None and prefix['timestamps'] is not None and (
+                identity['timestamps'][:len(prefix['timestamps'])] != prefix['timestamps']):
+            raise ValueError('Prefix saved timestamps differ')
         hashes = {}
         for key in ('identified_frame_sha256', 'tracked_frame_sha256'):
             left, right = frame_hashes(source, key), frame_hashes(prefix_reference, key)

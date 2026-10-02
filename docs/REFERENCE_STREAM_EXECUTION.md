@@ -50,6 +50,9 @@ same output and is released if its owning process exits. The sequence is only
 successful after every requested frame is committed and the final contract is
 rechecked. `PAUSED.json` is historical metadata; on successful resumption it is
 marked resolved. `SUCCESS` is the completion authority, not a 100% tracking bar.
+Resumed ETA uses only frames processed in the current invocation as its speed
+sample; the percentage still includes previously committed frames. Initial ETA
+is unavailable until the first new frame completes.
 
 These tests cover process interruption/publication failure. Atomic directory
 rename is not a claim of proven power-loss durability on every filesystem, and
@@ -61,6 +64,8 @@ signatures against deliberate tampering.
 
 Install the package in the active validation environment first; scripts do not
 guess another environment or silently import a different STEP checkout.
+The specialized POSIX runner uses Python >=3.8 APIs; the tested local environment
+is Python 3.13.5. This does not change the older core package's declared minimum.
 
 ```bash
 python -m pip install -e . -r requirements-validation.txt
@@ -119,6 +124,23 @@ This measures warm prepared identification only; it excludes ingestion, tracking
 hash computation and output. An end-to-end run is a separate comparison. Laptop
 tests do not establish RCC 16/32-worker scaling or physical job-memory limits.
 
+The completed 72-frame full-grid prepared-input benchmark ran forward and
+reverse, with two repeats each. Median identification seconds across four
+measurements per configuration, including pool startup/shutdown:
+
+| Batch frames | Workers | Fresh pool | Persistent pool |
+|---:|---:|---:|---:|
+| 6 | 4 | 12.573 | 12.221 |
+| 6 | 8 | 7.021 | 6.530 |
+| 24 | 4 | 9.710 | 9.590 |
+| 24 | 8 | 5.197 | 5.046 |
+
+Every identified frame matched the serial reference hash. Persistent reuse
+improved this stage by approximately 1–7%, not a demonstrated substantial
+end-to-end speedup. A separate single-batch 24-frame experiment was slower
+with persistent workers. The default therefore remains `fresh`; the optional
+executor is not a scientific change or an automatic performance promotion.
+
 ## Evidence and limitations
 
 The initial month experiment processed **744 full-grid 1996 July intervals**
@@ -128,6 +150,43 @@ immutable IDs, 53,732 full edges/scores, 392 event records, and final family roo
 match. Its first 168 frames match the previously saved identification and
 tracking rasters exactly. The old monthly control did not save full-month
 rasters, so full-month pixel equality was unavailable in that initial comparison.
+
+The completed **2208-hour 1996 JJA** test contains 504,350 objects, 154,046 edges,
+352,793 branches, and 1,238 event records (688 split / 542 merge / 8 complex).
+A fresh-worker 24-frame control was compared with persistent workers paused
+after 720 frames at the June/July handoff, then resumed in 32-frame batches.
+Every frame's ID and tracked-raster hash, every immutable object field, full
+edge including score/overlap fields, event, saved timestamp/grid/unit contract,
+and final-known family root match. This is exact execution equivalence on one
+year's summer, not new algorithm calibration or multi-year scientific truth.
+
+A real SIGINT test interrupted a 72-frame stream after its first six-frame
+chunk published. Resume with changed workers/executor/batch length reproduces
+the prior frozen June-1 reference exactly, including all raster hashes and
+catalogs. A synthetic publication failure also leaves an ignored/preserved
+hidden staging directory and reprocesses its unpublished frames.
+
+The JJA final checkpoint is 8,449,545 bytes and still retains 352,793 historical
+branch parents. Checkpoint history is **not bounded** by batch size. All saved
+checkpoints total 429,975,597 bytes in the 24-frame control versus 341,117,315
+bytes with the changed boundary schedule. Different totals reflect different
+snapshot frequency and object activity; they are not a ten-year space forecast.
+No worker-summed physical-memory bound is established by these laptop tests.
+
+An additional untouched winter window covers 120 intervals ending February-27
+01:00 through March-3 00:00, including February-29. A seven-frame fresh-worker
+control matches a 13-frame persistent-worker run paused after 39 frames and
+resumed with five workers instead of eight. All raster hashes and full catalogs
+match: 22,806 objects, 7,444 edges, 20 gap edges, 53 event records. JJA plus this
+window comprise 2,328 distinct intervals from the same 1996 year; repeated
+execution is not additional independent validation data.
+
+The final synthetic/diagnostic suite has 138 passed and one skipped test; the
+skipped test requires a separately pinned original STEP checkout, unavailable
+locally. `pip check` reports no broken declared requirements. A native NumPy /
+NetCDF4 binary-size warning and NumPy-2.5 deprecation warnings remain in this
+environment; passing local tests does not resolve binary-ABI compatibility or
+certify the RCC environment. Test a clean pinned deployment environment there.
 
 The new audit tool normalizes family IDs to the last checkpoint before catalog
 comparison; per-chunk as-of roots can legitimately differ with batch boundaries.

@@ -191,7 +191,7 @@ def execute(a, contract, entries, reader, preset, grid):
     state = load_tracking_state(parts[-1][0] / 'state.json') if parts else None
     if state is not None and (state.last_time != offset - 1 or state.sequence_id != a.sequence_id):
         raise ValueError('Latest checkpoint time or sequence differs')
-    progress = FrameProgress(a.hours, enabled=not a.no_progress)
+    progress = FrameProgress(a.hours, enabled=not a.no_progress, initial_done=offset)
     progress.unit = 'hours'
     began = time.perf_counter()
     count = 0

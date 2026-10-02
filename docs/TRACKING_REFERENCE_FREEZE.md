@@ -172,3 +172,12 @@ threshold/envelope sensitivity, rainfall conservation and original-STEP controls
 Evaluate untouched future and historical windows before committing the definition
 to climatological production. If those tests require a logic change, make a new
 version and rerun the fixed reference suite instead of silently rewriting v1.
+
+Engineering evidence added on 2026-10-02: the unchanged reference reproduces
+all 2208 full-grid JJA frames, complete graph scores/events and final family roots
+across persistent/fresh ID workers and a changed checkpoint schedule, including
+a June/July restart. A real SIGINT/restart test also reproduces the existing
+72-hour June reference. See [restartable stream execution](REFERENCE_STREAM_EXECUTION.md)
+for the guarded runner and [rainfall screening](RAINFALL_SCREENING_1996_JULY.md)
+for why object-count fragmentation and labeled-rain contribution must be
+evaluated separately. These additions do not promote a new scientific threshold.

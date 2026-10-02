@@ -4,8 +4,14 @@ import time
 
 
 class FrameProgress:
-    def __init__(self, total, enabled=True, stream=None, clock=time.monotonic):
-        self.total, self.done = total, 0
+    def __init__(self, total, enabled=True, stream=None, clock=time.monotonic,
+                 initial_done=0):
+        if total <= 0:
+            raise ValueError('total must be positive')
+        if not 0 <= initial_done <= total:
+            raise ValueError('initial_done must be between zero and total')
+        self.total, self.done = total, initial_done
+        self.initial_done = initial_done
         self.enabled = enabled
         self.stream = stream if stream is not None else sys.stderr
         self.clock, self.started = clock, clock()
@@ -22,8 +28,9 @@ class FrameProgress:
         fraction = self.done/self.total
         filled = int(24*fraction)
         bar = '#' * filled + '-' * (24-filled)
-        eta = (f'~{elapsed/self.done*(self.total-self.done):.0f}s'
-               if 0 < self.done < self.total else '--')
+        processed = self.done - self.initial_done
+        eta = (f'~{elapsed/processed*(self.total-self.done):.0f}s'
+               if processed > 0 and self.done < self.total else '--')
         print(f'[{bar}] {self.done}/{self.total} {self.unit} tracked '
               f'({fraction:.1%}) | elapsed {elapsed:.0f}s | ETA {eta} | {phase}',
               file=self.stream, flush=True)
