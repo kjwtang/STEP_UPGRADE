@@ -6,6 +6,12 @@ each validation run. Do not update a checkout while its run is active.
 
 ## Unreleased — balanced v2 and scaling candidate
 
+- Add paired 1.0/0.5-mm/h sensitivity and a fixed-graph 1.0-seed / 0.5-envelope
+  comparator, with shared-pixel object mapping, weak-bridge/coreless accounting,
+  ownership/centroid diagnostics and reproducible synthetic checks. Frozen
+  scientific and tracking defaults are unchanged; see
+  `docs/RAIN_THRESHOLD_SENSITIVITY.md` for interpretation and promotion gates.
+
 - Add a pinned-preset bounded stream runner with an explicit input/ID/code
   contract, single-writer lock, transactional chunk publication, output hashes
   and verified resume. Reuse the hourly file manifest instead of rescanning it

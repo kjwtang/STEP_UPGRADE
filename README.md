@@ -3,6 +3,10 @@
 See [CHANGELOG.md](CHANGELOG.md) for reproducible experiment commits and the
 public-release checklist. Experimental branches are not validated releases.
 
+The optional [1.0/0.5-mm/h sensitivity study](docs/RAIN_THRESHOLD_SENSITIVITY.md)
+compares lower-threshold tracking with fixed-core rain envelopes; it does not
+replace the frozen operational reference.
+
 STEP_UPGRADE identifies two-dimensional precipitation objects and builds a
 time-continuous lineage graph. Version 0.3 distinguishes three identifiers:
 
