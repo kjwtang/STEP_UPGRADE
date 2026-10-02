@@ -242,3 +242,9 @@ Current named operational reference:
 [tracking reference freeze v1](docs/TRACKING_REFERENCE_FREEZE.md).
 It freezes ranked-v2 implementation/configuration for the next experiment stage,
 not a claim of validated multi-year climate production or convective classification.
+
+For pinned-preset rain-only execution with verified interruption/resume and
+opt-in reusable identification workers, see
+[reference stream execution](docs/REFERENCE_STREAM_EXECUTION.md).
+This preserves the frozen scientific reference; it does not independently track
+months or spatial tiles and concatenate their IDs.

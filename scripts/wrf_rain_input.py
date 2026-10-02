@@ -40,10 +40,17 @@ def internal_time(ds,path):
     return np.datetime64(text.replace("_","T"),"s")
 
 
-def read_wrf(a):
+def read_wrf(a, entries=None):
+    """Read a validated slice; callers may reuse a manifest from ``manifest``.
+
+    Reuse avoids rescanning a large directory for every bounded batch. Snapshot
+    size/mtime, cadence, grid, units and accumulation checks still run per slice.
+    A resumed execution must separately validate its full planned manifest.
+    """
     time_source = getattr(a,'wrf_time_source','internal')
     grid_source = getattr(a,'wrf_grid_source','coordinates')
-    entries = manifest(a.input,filename_time=time_source=='filename')
+    if entries is None:
+        entries = manifest(a.input,filename_time=time_source=='filename')
     if a.inspect:
         print(f"Snapshots: {len(entries)}; possible intervals: {len(entries)-1}")
         print("First:",entries[0],"Last:",entries[-1])

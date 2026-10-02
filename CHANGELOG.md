@@ -6,6 +6,16 @@ each validation run. Do not update a checkout while its run is active.
 
 ## Unreleased — balanced v2 and scaling candidate
 
+- Add a pinned-preset bounded stream runner with an explicit input/ID/code
+  contract, single-writer lock, transactional chunk publication, output hashes
+  and verified resume. Reuse the hourly file manifest instead of rescanning it
+  for every chunk. Tracking and identification definitions are unchanged.
+- Add an opt-in persistent shared-mask/output ID pool, exact batch tests and
+  a startup-inclusive forward/reverse benchmark. Keep fresh workers as default
+  until deployment-specific performance evidence supports promotion.
+- Add full catalog/score/ID/family-root and per-frame hash equivalence audits
+  across changed chunk boundaries; see `docs/REFERENCE_STREAM_EXECUTION.md`.
+
 - Freeze a named operational ranked-v2 reference (`daf7011` tracking core),
   preserving legacy defaults. Weak ranked rescue now follows score assignment.
   Six-window comparison retains all continuations/events, with 168-frame exact
