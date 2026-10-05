@@ -152,3 +152,8 @@ control and its four-stage grouping, not just a converted threshold.
 **Decision:** freeze engineering reproducibility separately from the storm
 definition. Literature supports a layered seed/extent/system representation;
 it does not establish 1.0, 0.5 or 0.1 mm/h as the universal correct choice.
+
+Subsequent fixed-date tests are recorded separately:
+[frozen-extent holdouts](EXTENT_HOLDOUTS_2026-10-05.md) and
+[strong-rain phase sensitivity](SEED_STRENGTH_AUDIT_2026-10-05.md).
+They preserve the tracking reference and do not promote a scientific cutoff.

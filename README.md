@@ -256,3 +256,7 @@ months or spatial tiles and concatenate their IDs.
 For the fixed-seed 0.5/0.1-mm/h extent cross-date checks and unchanged tracking
 worker/chunk replay, see [October 5 validation](docs/EXTENT_HOLDOUTS_2026-10-05.md).
 This validation does not promote a new storm threshold.
+
+[Strong-rain phase sensitivity](docs/SEED_STRENGTH_AUDIT_2026-10-05.md) audits
+1/2/5-mm/h raw patch area and retrospective branch phases on that same graph;
+it does not reidentify objects or certify convection.
