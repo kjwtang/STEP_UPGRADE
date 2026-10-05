@@ -1,5 +1,21 @@
 # Change log
 
+## v0.4.0b3 — automatic multi-time and multi-file rainfall input (2026-10-05)
+
+- Extend the reference runner to single/multiple multi-time NetCDF files and
+  directories of these files; retain the hourly CSTM snapshot workflow.
+- Classify cumulative amounts, hourly interval amounts, and rates from names,
+  units and metadata, with explicit overrides for ambiguous fields.
+- Default index-only data to hourly cadence; record assumed file continuity
+  separately from verified calendar chronology. Sort calendar files by time.
+- Difference cumulative snapshots across file/chunk boundaries. Detect resets,
+  missing hours, duplicates, input changes, and mismatched grids; keep restart
+  contracts and bounded chunk reads. No whole-month precipitation load is required.
+- Add inspection, optional all-remaining-hours processing, axis/unit/time/grid
+  overrides, multi-file resume regressions and an extended installation smoke test.
+- Identification, tracking algorithms, and scientific reference preset remain
+  unchanged. Preserve b2 tag/history; b2 checkpoints need their original checkout.
+
 ## Documentation update — cumulative RAINNC and function guide (2026-10-05)
 
 - Put direct cumulative RAINNC input and internal hourly differencing at the

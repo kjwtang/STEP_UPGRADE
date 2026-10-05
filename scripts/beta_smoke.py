@@ -13,7 +13,7 @@ import xarray as xr
 from compare_rain_thresholds import reference_equivalence, dump
 from run_reference_stream import DEFAULT_PRESET, run as stream_run
 
-BETA_VERSION = '0.4.0b2'
+BETA_VERSION = '0.4.0b3'
 
 
 def synthetic_input(root):
@@ -49,15 +49,35 @@ def run(output, workers=2):
             stop_after_chunks=None, no_progress=False)
         settings.update(overrides)
         return SimpleNamespace(**settings)
-    print('1/3: frozen-preset whole-run control (12 hourly intervals)', flush=True)
+    print('1/5: frozen-preset whole-run control (12 hourly intervals)', flush=True)
     control = stream_run(options(output / 'control'))
-    print('2/3: pause after one 4-hour chunk', flush=True)
+    print('2/5: pause after one 4-hour chunk', flush=True)
     paused = stream_run(options(output / 'resumed', chunk_frames=4, stop_after_chunks=1))
     if paused != dict(status='paused', committed_frames=4) or (output / 'resumed/SUCCESS').exists():
         raise AssertionError('Pause was incorrectly treated as successful completion')
-    print('3/3: resume with changed chunk size/workers; compare complete outputs', flush=True)
+    print('3/5: resume with changed chunk size/workers; compare complete outputs', flush=True)
     resumed = stream_run(options(output / 'resumed', chunk_frames=3, workers=workers, resume=True))
     checks = reference_equivalence(output / 'resumed', output / 'control')
+    snapshots, stamps = [], []
+    for path in sorted(source.glob('*.nc')):
+        with xr.open_dataset(path) as ds:
+            snapshots.append(ds.RAINNC.values.copy())
+            attrs = dict(ds.attrs)
+        stamps.append(np.datetime64(path.stem[len('cstm_d01_'):].replace('_', 'T')))
+    merged = xr.Dataset({'RAINNC': (('time', 'y', 'x'), np.stack(snapshots), {'units': 'mm'})},
+                        coords={'time': np.array(stamps)}, attrs=attrs)
+    single = output / 'monthly.nc'
+    first, second = output / 'month_part1.nc', output / 'month_part2.nc'
+    merged.to_netcdf(single)
+    merged.isel(time=slice(0, 5)).to_netcdf(first)
+    merged.isel(time=slice(5, None)).to_netcdf(second)
+    print('4/5: single multi-time NetCDF; compare all frames/IDs/edges', flush=True)
+    stream_run(options(output / 'single', input=single, hours=None, chunk_frames=5))
+    checks['single_netcdf_equal'] = all(reference_equivalence(output / 'single', output / 'control').values())
+    print('5/5: multi-file boundary plus paused checkpoint resume', flush=True)
+    stream_run(options(output / 'multi', input=[second, first], chunk_frames=4, stop_after_chunks=1))
+    stream_run(options(output / 'multi', input=[second, first], chunk_frames=3, resume=True, workers=workers))
+    checks['multi_netcdf_resume_equal'] = all(reference_equivalence(output / 'multi', output / 'control').values())
     if (control['frames'], control['nodes'], control['edges'], control['gap_edges'], control['events']) != (
             12, 11, 10, 1, {}):
         raise AssertionError(f'Synthetic reference behavior changed: {control}')

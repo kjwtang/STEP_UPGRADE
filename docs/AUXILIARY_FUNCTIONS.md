@@ -20,9 +20,11 @@ python -u scripts/beta_smoke.py --output-dir results/beta_smoke_01 --workers 2
 version must match the script's beta version.
 
 **Output:** generated NetCDF snapshots under `input/`, whole-run `control/`,
-paused/resumed `resumed/`, `summary.json`, and `SUCCESS`.
-Expected summary: 12 frames, 11 nodes, 10 edges, one gap edge, eight exact checks.
+paused/resumed `resumed/`, merged NetCDF fixtures, `single/`, `multi/`,
+`summary.json`, and `SUCCESS`.
+Expected summary: 12 frames, 11 nodes, 10 edges, one gap edge, ten exact checks.
 The test crosses a month boundary and changes chunk size/worker count on resume.
+It also checks single-file and cross-file multi-time input against the snapshot control.
 Existing output directories are rejected.
 
 ### Regression tests

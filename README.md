@@ -4,14 +4,18 @@ STEP_UPGRADE turns gridded rainfall into a time-continuous catalog of rain objec
 identify each hourly object, track its movement and relationships, and retain
 continuations, splits, merges, and short gaps across files, chunks, and months.
 
-Group beta: **v0.4.0b2**. The recommended workflow uses hourly 4-km data and the
-[1-mm/h reference preset](https://github.com/kjwtang/STEP_UPGRADE/blob/v0.4.0b2/configs/rainfall_lineage_4km_1h_reference_v1.json).
+Group beta: **v0.4.0b3**. The recommended workflow uses hourly 4-km data and the
+[1-mm/h reference preset](https://github.com/kjwtang/STEP_UPGRADE/blob/v0.4.0b3/configs/rainfall_lineage_4km_1h_reference_v1.json).
 This README describes that beta. The program operates on rainfall, not cloud imagery.
 
 ## 1. Input: cumulative RAINNC directly
 
-**The recommended runner accepts cumulative `RAINNC` in mm. You do not need to
-prepare single-hour rainfall or merge the files into one large NetCDF first.**
+**The recommended runner accepts cumulative `RAINNC` directly. You do not need
+to prepare single-hour rainfall or merge files into one large NetCDF first.**
+It accepts an hourly snapshot directory, a single multi-time NetCDF, multiple
+multi-time files, or a directory containing those files. Multi-time fields may
+be cumulative amounts, hourly interval amounts, or rain rates; the reader
+detects their type from the variable name, units, and metadata.
 
 It reads consecutive snapshots and computes hourly rainfall internally:
 
@@ -25,26 +29,58 @@ Each interval is timestamped by its ending snapshot.
 
 | Input item | Required format |
 |---|---|
-| Files | Actual NetCDF files named `cstm_d01_YYYY-MM-DD_HH:MM:SS.nc` or the same pattern with `.rain` |
-| Variable | `RAINNC`, cumulative precipitation, with units attribute `mm` |
-| Dimensions | `(south_north, west_east)`, optionally preceded by a singleton `Time` dimension |
-| Time | Consecutive hourly filenames; internal `Times` is not required |
+| Hourly snapshot files | Actual NetCDF named `cstm_d01_YYYY-MM-DD_HH:MM:SS.nc` or `.rain`; cumulative `RAINNC` in mm |
+| Snapshot dimensions | `(south_north, west_east)`, optionally preceded by singleton `Time` |
+| Multi-time files | NetCDF precipitation with three axes, normally `(time,y,x)` or `(Time,south_north,west_east)`; axis order may differ |
+| Multi-time variable | `RAINNC` selected automatically; otherwise one identifiable precipitation variable, or `--variable NAME` |
+| Time | Default interval is 1 hour; decoded calendar times must be consecutive; index-only time uses the hourly assumption below |
 | Grid | Same shape/projection in every file; the reference preset requires `DX=DY=4000` meters |
 | Coordinates | `XLAT/XLONG` arrays are not required by the reference runner |
 | Sequence | One climate/member sequence per run; do not mix members or duplicate timestamps |
 
-Required global grid attributes:
+Hourly CSTM snapshot directories require global grid attributes:
 `DX, DY, MAP_PROJ, CEN_LAT, CEN_LON, TRUELAT1, TRUELAT2, STAND_LON,
-MOAD_CEN_LAT, POLE_LAT, POLE_LON`. Use actual source metadata.
+MOAD_CEN_LAT, POLE_LAT, POLE_LON`. Use actual source metadata. Multi-time files
+require `DX`/`DY`; remaining projection attributes are retained and compared when
+present. If spacing is absent, supply the actual spacing with `--grid-km 4`.
+This explicitly declares spacing; it does not generate latitude/longitude or a projection.
 
 The runner scans the input directory recursively. Missing hours, duplicate
 timestamps, changing grids, negative accumulation, or cumulative decreases/resets
 stop the run. Resolve those inputs before rerunning; they are not silently
-zero-filled. Only RAINNC is processed; RAINC is not added automatically.
+zero-filled. Only the selected variable is processed; RAINC is not added automatically.
 
-**Already have hourly rainfall?** Use the Python identification/tracking functions
-in section 5 with rain rates in mm/h. Do not feed already differenced rainfall
-to the cumulative-RAINNC runner, even if the variable is named RAINNC.
+### Automatic type detection and time assumptions
+
+- `RAINNC` with amount units is treated as cumulative. Explicit `rain_kind`
+  attributes and cumulative descriptions are also recognized.
+- Rate units such as `mm/h` or `kg m-2 s-1` identify a rate and are converted
+  to mm/h. Amounts marked `rain_kind=interval` or `cell_methods="time: sum"`
+  are hourly interval amounts. No differencing is applied to interval/rate input.
+- An ambiguous amount field is not guessed from its numerical values. Use
+  `--rain-kind cumulative`, `interval`, or `rate`. Already differenced data still
+  named `RAINNC` must declare `rain_kind=interval` or use `--rain-kind interval`.
+- Numeric `time=0,1,2,...`, or a missing time coordinate, defaults to hourly
+  indices. Numeric spacing must be hourly; non-hourly calendar data is rejected.
+  Units are required; use `--units mm` only if this is the actual source unit.
+- Calendar-timed files are ordered by their internal times. Index-only files
+  use explicit argument order, or lexicographic path order in a directory.
+  Zero-based indices may restart in each file. Such file boundaries are assumed
+  continuous and recorded as assumptions, not verified dates. Use zero-padded,
+  chronologically ordered filenames or pass the files explicitly in order.
+- For index-only input, `--time-origin 1996-01-01T00:00:00` gives the first global
+  sample a calendar date. Without it, `timestamps` is null and `sample_indices`
+  identifies samples; the program does not invent calendar dates.
+
+For cumulative input, differencing crosses file boundaries. Only the first
+sample of the entire planned sequence is a predecessor rather than a tracked
+hour. For example, 741 samples produce 740 hourly rainfall frames. If accumulation
+resets at a monthly/restart boundary, correct that reset upstream; the first
+sample in the next file is not silently substituted for its hourly rainfall.
+Duplicate calendar snapshots are rejected; supply one copy of each time.
+
+**Already have hourly rainfall?** Multi-time NetCDF interval/rate input can use
+this same runner. The Python functions in section 5 take prepared mm/h arrays.
 
 ## 2. Install and check the environment
 
@@ -54,9 +90,9 @@ Recommended Python: **3.13.5**; minimum: **3.12**. The runner uses Linux/macOS
 POSIX process and file-lock facilities.
 
 ```bash
-git clone --branch v0.4.0b2 --single-branch \
-  https://github.com/kjwtang/STEP_UPGRADE.git STEP_UPGRADE_beta_040b2
-cd STEP_UPGRADE_beta_040b2
+git clone --branch v0.4.0b3 --single-branch \
+  https://github.com/kjwtang/STEP_UPGRADE.git STEP_UPGRADE_beta_040b3
+cd STEP_UPGRADE_beta_040b3
 python3.13 -m venv .venv-step-beta
 source .venv-step-beta/bin/activate
 python -m pip install --only-binary=:all: -r requirements-beta.txt
@@ -65,7 +101,7 @@ python -m pip check
 python -c "import step; from importlib.metadata import version; print(version('step-upgrade')); print(step.__file__)"
 ```
 
-Expect version `0.4.0b2` and an import path in this checkout. Keep the checkout:
+Expect version `0.4.0b3` and an import path in this checkout. Keep the checkout:
 the installation above is editable. Do not change source or dependencies while
 a run is active or waiting to resume. Pins cover top-level dependencies; save
 `pip freeze` with your run.
@@ -77,16 +113,16 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 python -u scripts/beta_smoke.py --output-dir results/beta_smoke_01 --workers 2
 ```
 
-Expected output: 12 frames, 11 nodes, 10 edges, one gap edge, eight equality
+Expected output: 12 frames, 11 nodes, 10 edges, one gap edge, ten equality
 checks set to true, and `results/beta_smoke_01/SUCCESS`.
 For RCC module/conda setup, see the
-[installation guide](https://github.com/kjwtang/STEP_UPGRADE/blob/v0.4.0b2/docs/GROUP_BETA_0_4_0b2.md#2-installation-environment).
+[installation guide](https://github.com/kjwtang/STEP_UPGRADE/blob/v0.4.0b3/docs/GROUP_BETA_0_4_0b3.md).
 
 ## 3. Main workflow: identify and track cumulative rainfall
 
 **Entry point:** `scripts/run_reference_stream.py`.
 
-**Use:** pass the directory of hourly cumulative RAINNC files. The command reads
+**Use:** pass an hourly snapshot directory or one/multiple multi-time files. The command reads
 and differences rainfall, identifies objects, advances tracking in time order,
 and publishes tables and checkpoints per chunk.
 
@@ -99,10 +135,34 @@ python -u scripts/run_reference_stream.py /PATH/TO/ONE_SEQUENCE \
   --output-dir results/rain24_01
 ```
 
+Inspect a monthly file before processing (no output directory is created):
+
+```bash
+python scripts/run_reference_stream.py /PATH/TO/month.nc --inspect
+```
+
+Process all available hours across multiple files in one continuous execution:
+
+```bash
+python -u scripts/run_reference_stream.py /PATH/TO/june.nc /PATH/TO/july.nc \
+  --sequence-id member0_1996 --workers 4 --chunk-frames 6 \
+  --output-dir results/multiple_months_01
+```
+
+The same command accepts just `/PATH/TO/month.nc` or a directory of monthly files.
+Omit `--hours` to process the remaining sequence; set it for a bounded trial.
+Add `--grid-km 4` only if DX/DY are absent and the data really has 4-km spacing.
+
 | Option | Meaning / usage |
 |---|---|
-| `--start` | Zero-based index of the cumulative predecessor in the sorted file manifest |
-| `--hours` | Number of hourly rainfall intervals, not number of cumulative files |
+| `--start` | Global sample index: cumulative predecessor, or first interval/rate frame |
+| `--hours` | Number of hourly frames; omitted means all remaining available intervals |
+| `--inspect` | Print detected variable, kind, units, axes, timing assumptions and grid; no tracking |
+| `--variable` / `--rain-kind` | Resolve variable selection or ambiguous amount metadata explicitly |
+| `--dims TIME Y X` | Declare three axis names when automatic axis detection is insufficient |
+| `--units` | Explicit source units; conversion to mm/h is recorded in chunk metadata |
+| `--time-coordinate` / `--time-origin` | Select a 1D time variable, or date the first global index-only sample |
+| `--grid-km` | Declare missing multi-time grid spacing; cannot contradict source DX/DY |
 | `--sequence-id` | Namespace for one continuous climate/member sequence and its IDs |
 | `--workers` | Parallel identification workers; tracking state advances sequentially |
 | `--chunk-frames` | Rainfall frames processed per chunk; begin with 6-24 |
@@ -135,6 +195,13 @@ the input plan, `--hours`, preset, sequence ID, source, environment, and
 Include adjacent months in one planned input sequence; carry tracking state
 rather than tracking each month independently and concatenating its IDs.
 A new climate/member needs a new sequence/output directory.
+The input file boundaries and processing chunk boundaries need not coincide.
+For cumulative input, each chunk rereads its predecessor, including across files;
+tracking continues from the committed checkpoint without renumbering.
+Resume requires the same planned files and interval range. This is not a watch
+mode: newly appended hours require a separately planned workflow, not changing
+`--hours` or the input list during resume. Start new runs for b3; b2 execution
+contracts cannot resume after a code update.
 
 The progress bar counts processed hours. `SUCCESS` appears only after all
 chunks and the final report have been committed. Only one writer can operate
@@ -184,6 +251,9 @@ time,node_id,branch_id,family_id,local_label,area_cells,centroid_y,centroid_x,me
 
 `time` is the zero-based frame index across the entire run, not a Unix timestamp;
 use each chunk's `metadata.json -> timestamps` for interval-ending timestamps.
+For undated index-only input, timestamps are null; `sample_indices` gives the
+global source sample indices instead. `time_verified` distinguishes decoded
+calendar evidence from an assumed hourly timeline or an explicit date origin.
 Centroids are rainfall-weighted grid coordinates. Intensities are mm/h;
 `precipitation_sum` is the sum of pixel rain rates, not an area-integrated volume.
 `area_cells` counts retained wet pixels; bounding-box stop indices are exclusive.

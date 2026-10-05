@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Restartable, bounded rain-only execution of an explicitly named preset.
 
-No tracking or identification rules are changed. Only filename-hourly RAINNC
-and projection-attribute grids are supported here. Graphs and checkpoints are
+No tracking or identification rules are changed. Hourly snapshots and sequences
+of multi-time NetCDF files are supported. Graphs and checkpoints are
 published together per chunk; labels are optional diagnostics, not the default.
 """
 import argparse
@@ -26,11 +26,12 @@ from step.tracking import load_tracking_state, save_tracking_state, track_with_g
 from frame_progress import FrameProgress
 from run_npy_validation import disk, write_graph
 from wrf_rain_input import manifest, read_wrf
+from netcdf_rain_input import NetCDFRainSource, input_paths
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PRESET = ROOT / 'configs/rainfall_lineage_4km_1h_reference_v1.json'
 SOURCE_FILES = ('step/tracking.py', 'step/identification.py', 'step/parallel_identification.py',
-                'scripts/wrf_rain_input.py', 'scripts/run_reference_stream.py',
+                'scripts/wrf_rain_input.py', 'scripts/netcdf_rain_input.py', 'scripts/run_reference_stream.py',
                 'scripts/run_npy_validation.py', 'scripts/frame_progress.py')
 
 
@@ -53,8 +54,11 @@ def atomic_json(path, value):
 
 def fingerprint(entries):
     records = []
+    stats = {}
     for stamp, path in entries:
-        stat = path.stat()
+        if path not in stats:
+            stats[path] = path.stat()
+        stat = stats[path]
         records.append(dict(timestamp=str(stamp), path=str(path.resolve()),
                             size=stat.st_size, mtime_ns=stat.st_mtime_ns))
     return records
@@ -126,7 +130,7 @@ def dependency_versions():
 
 
 def run(a):
-    if a.hours < 1 or a.start < 0 or a.workers < 1 or a.chunk_frames < 1:
+    if (a.hours is not None and a.hours < 1) or a.start < 0 or a.workers < 1 or a.chunk_frames < 1:
         raise ValueError('hours/chunk/workers must be positive; start must be nonnegative')
     if a.stop_after_chunks is not None and a.stop_after_chunks < 1:
         raise ValueError('stop-after-chunks must be positive')
@@ -134,38 +138,86 @@ def run(a):
     if preset['input_contract'] != dict(grid_km=4, dt_hours=1,
                                        rain_units_after_normalization='mm/h'):
         raise ValueError('This runner requires the explicit 4-km, 1-hour, mm/h contract')
-    entries = manifest(a.input, filename_time=True)
-    selected = entries[a.start:a.start + a.hours + 1]
-    if len(selected) != a.hours + 1:
-        raise ValueError('N rain intervals need N+1 available cumulative snapshots')
-    if any(b[0] - c[0] != np.timedelta64(1, 'h') for c, b in zip(selected, selected[1:])):
-        raise ValueError('Planned snapshots must be consecutive hourly observations')
-    reader = SimpleNamespace(input=a.input, wrf_time_source='filename',
+    inputs = [a.input] if isinstance(a.input, (str, Path)) else a.input
+    paths = input_paths(inputs)
+    legacy = (len(inputs) == 1 and Path(inputs[0]).is_dir() and
+              all(p.name.startswith('cstm_d01_') for p in paths))
+    if legacy:
+        import xarray as xr
+        with xr.open_dataset(paths[0]) as ds:
+            legacy = ('RAINNC' in ds and (ds.RAINNC.ndim == 2 or
+                      ds.RAINNC.dims == ('Time', 'south_north', 'west_east') and ds.sizes['Time'] == 1))
+    reader = SimpleNamespace(input=Path(inputs[0]), wrf_time_source='filename',
         wrf_grid_source='attributes', inspect=False, variable=None,
         rain_kind='cumulative', start=a.start, hours=1, crop=0, units=None,
         dt_hours=1, negative_tolerance_mm=0)
-    probe, metadata = read_wrf(reader, entries=entries)
+    source = None
+    if legacy:
+        if (getattr(a, 'rain_kind', 'auto') not in ('auto', 'cumulative') or
+                getattr(a, 'variable', None) not in (None, 'RAINNC') or
+                any(getattr(a, k, None) is not None for k in
+                    ('dims', 'units', 'time_coordinate', 'time_origin', 'grid_km'))):
+            raise ValueError('Hourly CSTM snapshot directories use filename time, RAINNC in mm and source grid attributes')
+        entries, read_input, extra = manifest(Path(inputs[0]), filename_time=True), read_wrf, 1
+    else:
+        source = NetCDFRainSource(inputs, a)
+        entries, read_input, extra = source.entries, source.read, source.extra
+    if getattr(a, 'inspect', False):
+        if source is not None:
+            if source.available:
+                source.validate_plan(0, source.available)
+            return source.inspect()
+        with xr.open_dataset(entries[0][1]) as ds:
+            return dict(files=len(entries), available_hours=len(entries)-1,
+                rain_kind='cumulative', time_source='filename', default_dt_hours=1.,
+                variable='RAINNC', dimensions=list(ds.RAINNC.dims),
+                source_units=str(ds.RAINNC.attrs.get('units', '')),
+                grid_attributes={k: float(ds.attrs[k]) for k in
+                    ('DX', 'DY', 'MAP_PROJ', 'CEN_LAT', 'CEN_LON', 'TRUELAT1', 'TRUELAT2',
+                     'STAND_LON', 'MOAD_CEN_LAT', 'POLE_LAT', 'POLE_LON') if k in ds.attrs},
+                first_sample=str(entries[0][0]), last_sample=str(entries[-1][0]))
+    if a.hours is None:
+        a.hours = len(entries) - extra - a.start
+    selected = entries[a.start:a.start + a.hours + extra]
+    if len(selected) != a.hours + extra or a.hours < 1:
+        raise ValueError('N rain intervals need N+1 available cumulative snapshots')
+    if source is not None:
+        source.validate_plan(a.start, a.hours)
+    elif any(b[0] - c[0] != np.timedelta64(1, 'h') for c, b in zip(selected, selected[1:])):
+        raise ValueError('Planned snapshots must be consecutive hourly observations')
+    if not a.output_dir or not a.sequence_id:
+        raise ValueError('--output-dir and --sequence-id are required for processing')
+    probe, metadata = read_input(reader, entries=entries)
     del probe
     grid = grid_contract(metadata)
     if any(grid['grid_attributes'][key] != 4000 for key in ('DX', 'DY')):
         raise ValueError('DX and DY must both be 4000 metres for this preset')
+    detection = dict(stage='input', rain_kind=metadata.get('rain_kind', 'cumulative'),
+        source_files=len({p for _, p in selected}), planned_hours=a.hours,
+        dt_hours=metadata['dt_hours'], time_source=metadata['time_source'],
+        time_verified=metadata['time_verified'])
+    if metadata.get('assumptions'):
+        detection['notice'] = 'Index-only input assumes hourly cadence and continuous file boundaries; see chunk metadata'
+    print(json.dumps(detection), flush=True)
     # Total directory size is not a spatial contract; allow unrelated files to
     # arrive while requiring every planned snapshot to remain unchanged.
     grid['source_shape'] = grid['source_shape'][1:]
     contract = dict(format_version=1, preset=preset, sequence_id=a.sequence_id,
         start=a.start, hours=a.hours, save_labels=a.save_labels, grid=grid,
         snapshots=fingerprint(selected), dependency_versions=dependency_versions(),
+        input_detection=metadata.get('input_detection'),
+        rain_kind=metadata.get('rain_kind', 'cumulative'),
         source_sha256={name: digest(ROOT / name) for name in SOURCE_FILES})
     out = a.output_dir
     if not a.resume:
         out.mkdir(parents=True, exist_ok=False)
     with execution_lock(out):
-        return execute(a, contract, entries, reader, preset, grid)
+        return execute(a, contract, entries, reader, preset, grid, read_input, extra)
 
 
-def execute(a, contract, entries, reader, preset, grid):
+def execute(a, contract, entries, reader, preset, grid, read_input=read_wrf, extra=1):
     out = a.output_dir
-    selected = entries[a.start:a.start + a.hours + 1]
+    selected = entries[a.start:a.start + a.hours + extra]
     contract_digest = contract_hash(contract)
     if a.resume:
         saved = json.loads((out / 'execution_contract.json').read_text())
@@ -212,9 +264,9 @@ def execute(a, contract, entries, reader, preset, grid):
             size = reader.hours
             progress.update(offset, phase=f'reading frames {offset + 1}-{offset + size}')
             t = time.perf_counter()
-            if fingerprint(entries[reader.start:reader.start + size + 1]) != contract['snapshots'][offset:offset + size + 1]:
+            if fingerprint(entries[reader.start:reader.start + size + extra]) != contract['snapshots'][offset:offset + size + extra]:
                 raise ValueError('Planned input changed before read')
-            rain, meta = read_wrf(reader, entries=entries)
+            rain, meta = read_input(reader, entries=entries)
             current_grid = grid_contract(meta)
             current_grid['source_shape'] = current_grid['source_shape'][1:]
             if current_grid != grid:
@@ -300,7 +352,7 @@ def execute(a, contract, entries, reader, preset, grid):
             contract_sha256=contract_digest, last_time=state.last_time,
             historical_branches=len(state.family_parent),
             final_checkpoint_bytes=parts[-1][1]['checkpoint_bytes'],
-            note='Filename cadence and attribute grid checked, not geographical or meteorological certification. Timings sum committed chunks across invocations; no whole-run equivalence inferred.')
+            note='See chunk metadata for verified versus assumed time and input detection. Timings sum committed chunks across invocations; no whole-run equivalence inferred.')
         atomic_json(out / 'summary.json', summary)
         if (out / 'PAUSED.json').exists():
             atomic_json(out / 'PAUSED.json', dict(status='resolved', committed_frames=offset,
@@ -318,12 +370,20 @@ def execute(a, contract, entries, reader, preset, grid):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('input', type=Path)
-    p.add_argument('--output-dir', type=Path, required=True)
+    p.add_argument('input', type=Path, nargs='+', help='Directory, one NetCDF file, or ordered NetCDF files')
+    p.add_argument('--output-dir', type=Path)
     p.add_argument('--preset', type=Path, default=DEFAULT_PRESET)
-    p.add_argument('--start', type=int, default=0, help='Preceding cumulative snapshot index')
-    p.add_argument('--hours', type=int, required=True)
-    p.add_argument('--sequence-id', required=True)
+    p.add_argument('--start', type=int, default=0, help='Global predecessor index for cumulative rain; first frame index otherwise')
+    p.add_argument('--hours', type=int, help='Intervals to track; default is all remaining available hours')
+    p.add_argument('--sequence-id')
+    p.add_argument('--inspect', action='store_true', help='Show detected input type/time/grid without processing')
+    p.add_argument('--variable', help='Select a precipitation variable explicitly')
+    p.add_argument('--rain-kind', choices=['auto', 'cumulative', 'interval', 'rate'], default='auto')
+    p.add_argument('--dims', nargs=3, metavar=('TIME', 'Y', 'X'), help='Explicit axis names for multi-time files')
+    p.add_argument('--units', help='Explicit source units if missing/incorrect metadata')
+    p.add_argument('--time-coordinate', help='One-dimensional time variable on the time axis')
+    p.add_argument('--time-origin', help='ISO timestamp of global sample zero for index-only files')
+    p.add_argument('--grid-km', type=float, help='Actual grid spacing if DX/DY are missing; must match preset')
     p.add_argument('--workers', type=int, default=4)
     p.add_argument('--chunk-frames', type=int, default=24)
     p.add_argument('--id-executor', choices=['fresh', 'persistent'], default='fresh',
