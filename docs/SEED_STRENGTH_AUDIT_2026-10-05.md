@@ -152,6 +152,40 @@ then assess that definition on an untouched year/sequence. Real 2/5-mm/h
 identification, weak-only temporal attachment and family-level qualification are
 separate future experiments. No such change was made today.
 
+### User decision and later data processing
+
+After reviewing the audit, the user explicitly chose **not to change catalog-entry
+conditions**. Keep the complete existing rainfall catalog. The sensitivity table
+is a hypothetical accounting selection, not a filtered catalog or an implemented
+classification rule. Further work may plan data handling without silently
+activating any strong-core gate.
+
+For later multi-year data, the proposed arrangement is:
+
+1. Normalize cumulative RAINNC to verified hourly intervals, with explicit
+   predecessor snapshots, missing-hour/reset handling and source provenance.
+   Monthly/yearly file boundaries must not restart the accumulator implicitly.
+2. Preserve the named 1-mm/h identification and ordered tracking-state stream,
+   handing checkpoints across contiguous chunks/months. Independent members or
+   climate sequences may run separately; within-sequence chunks are not
+   independently tracked and glued by renumbering.
+3. Retain baseline node/branch/event IDs and the complete rain accounting.
+   Record alternative 0.5/0.1 extent budgets separately; expanded centroids do
+   not feed tracking and omitted weak-only rain remains explicit.
+4. Store numerical strong-rain diagnostics in a separate sidecar keyed by
+   immutable sequence/frame/node identities: raw peak rate, threshold-pixel
+   counts, largest contiguous patch, and observed branch-phase duration/context.
+   Keep rates/areas available rather than baking a binary convection label into
+   the catalog. Retrospective labels must be distinguished from online data.
+5. Assess historical/future definitions identically, with full versus qualified
+   rainfall budgets reported together if a later scientific classification is
+   authorized. Do not infer future thresholds from whichever subset looks most
+   favorable in these three 1996 windows.
+
+This is a processing plan, not a newly implemented production pipeline. Current
+audits already retain per-node numerical diagnostics; no sidecar is consumed as
+a catalog filter and no automatic classification is enabled.
+
 ## Verification and timing
 
 Final full test suite: **166 passed, one skipped**. Existing NumPy/netCDF4
