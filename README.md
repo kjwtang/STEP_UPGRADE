@@ -252,3 +252,7 @@ opt-in reusable identification workers, see
 [reference stream execution](docs/REFERENCE_STREAM_EXECUTION.md).
 This preserves the frozen scientific reference; it does not independently track
 months or spatial tiles and concatenate their IDs.
+
+For the fixed-seed 0.5/0.1-mm/h extent cross-date checks and unchanged tracking
+worker/chunk replay, see [October 5 validation](docs/EXTENT_HOLDOUTS_2026-10-05.md).
+This validation does not promote a new storm threshold.

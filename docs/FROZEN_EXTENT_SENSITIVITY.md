@@ -91,3 +91,8 @@ Do not select a threshold only by rain recovery. Keep the June development windo
 separate from independently chosen evaluation dates. Stronger-seed thresholds,
 minimum core area/duration, distance caps, weak-stage temporal attachment and
 system-level identity are separate future experiments, not enabled by this test.
+
+The fixed July/August 72-hour cross-date validation, seed-area subsets, reviewed
+extreme masks and worker/chunk execution replay are recorded in
+[the October 5 holdout report](EXTENT_HOLDOUTS_2026-10-05.md). Neither threshold
+nor tracking defaults were promoted by that verification.
