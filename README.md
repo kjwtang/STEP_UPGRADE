@@ -260,3 +260,8 @@ This validation does not promote a new storm threshold.
 [Strong-rain phase sensitivity](docs/SEED_STRENGTH_AUDIT_2026-10-05.md) audits
 1/2/5-mm/h raw patch area and retrospective branch phases on that same graph;
 it does not reidentify objects or certify convection.
+
+For the effect of rain geometry on tracking itself, see
+[fixed-seed tracking geometry sensitivity](docs/TRACKING_GEOMETRY_SENSITIVITY_2026-10-05.md).
+These isolated experiments retain catalog entry while changing feature masks;
+expanded graphs are not promoted to the named reference.
