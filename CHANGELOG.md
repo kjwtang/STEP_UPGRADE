@@ -1,5 +1,14 @@
 # Change log
 
+## Documentation update — cumulative RAINNC and function guide (2026-10-05)
+
+- Put direct cumulative RAINNC input and internal hourly differencing at the
+  start of the README; distinguish it from prepared-rate Python APIs.
+- Document main commands/functions, required inputs, options, returned values,
+  CSV/NPY/JSON schemas, identifier rules, and restart usage.
+- Group optional audits, plots, envelopes, execution modes, and legacy tools in
+  `docs/AUXILIARY_FUNCTIONS.md`. Scientific code and the v0.4.0b2 tag are unchanged.
+
 ## v0.4.0b2 — English-only group research beta (2026-10-05)
 
 - Fixed Git tag and package version for internal trials; not a public production
