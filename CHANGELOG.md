@@ -1,11 +1,11 @@
 # Change log
 
-## v0.4.0b1 — group research beta (2026-10-05)
+## v0.4.0b2 — English-only group research beta (2026-10-05)
 
 - Fixed Git tag and package version for internal trials; not a public production
   release or scientific cloud/convection validation. Scientific core, reference
   preset and catalog admission conditions remain unchanged.
-- Add Chinese installation/feature/input/output guide, pinned top-level beta
+- Add English installation/feature/input/output guide, pinned top-level beta
   dependencies, Python >=3.12 installation floor, and modern editable build backend.
 - Add a synthetic cumulative-rain month-boundary smoke test with controlled pause,
   changed workers/chunks, exact full replay and a completion marker.
@@ -13,6 +13,13 @@
   extent measurement separate from experimental expanded-feature tracking.
 - Upstream licensing/citation work is deferred for this internal handoff at the
   user's request, not asserted resolved; revisit before public distribution.
+- Translate historical Chinese validation and diagnosis guides into English,
+  preserving their commands, parameters, and scientific caveats. Add a language
+  regression guard. Retain Git history without rewriting prior commits.
+- Limit default pytest discovery to `tests/` so ignored result directories with
+  verification checkouts are not collected as duplicate test modules.
+- Supersede the unpublished local b1 candidate with b2; do not overwrite the
+  earlier local tag or publish it as the recommended group version.
 
 Commit hashes identify reproducible experiments; package version 0.3.0 alone
 does not distinguish experimental revisions. Record `git rev-parse HEAD` with

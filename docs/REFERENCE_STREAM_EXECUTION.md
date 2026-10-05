@@ -66,7 +66,7 @@ Install the package in the active validation environment first; scripts do not
 guess another environment or silently import a different STEP checkout.
 The specialized POSIX runner uses Python >=3.8 APIs; the group beta's installation
 floor is >=3.12 with its pinned dependencies, and its reference environment is
-Python 3.13.5. See the [group beta guide](GROUP_BETA_0_4_0b1_ZH.md) for installation.
+Python 3.13.5. See the [group beta guide](GROUP_BETA_0_4_0b2.md) for installation.
 
 ```bash
 python -m pip install -e . -r requirements-validation.txt

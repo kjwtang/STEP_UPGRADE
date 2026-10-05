@@ -13,7 +13,7 @@ import xarray as xr
 from compare_rain_thresholds import reference_equivalence, dump
 from run_reference_stream import DEFAULT_PRESET, run as stream_run
 
-BETA_VERSION = '0.4.0b1'
+BETA_VERSION = '0.4.0b2'
 
 
 def synthetic_input(root):

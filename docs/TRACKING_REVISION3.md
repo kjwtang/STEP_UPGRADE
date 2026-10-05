@@ -1,29 +1,35 @@
-# Tracking revision 3：候选门限与匹配修复
+# Tracking revision 3: candidate gates and assignment fixes
 
-本次不修改identification、降雨阈值、score权重、tau=.35、gap阈值或事件阈值。
+Historical revision note. This change did not alter identification, rainfall thresholds,
+score weights, tau=.35, gap thresholds, or event thresholds.
 
-候选集合为：当前质心附近、预测质心附近、以及原始/平移mask存在实质覆盖的对象的并集。
-覆盖阈值沿用event_overlap；即使该阈值设为0，也要求非零像素重叠。
-用包围盒中心KD-tree保守筛选潜在重叠，然后确认像素覆盖，不构建雨像素两两距离矩阵。
-仅包围盒相交不能让远距离对象进入候选。评分距离仍是预测误差，以隔离此次候选规则变化。
+Candidates are the union of objects near the current centroid, near the predicted centroid,
+and with substantive raw/advected mask coverage. Coverage uses `event_overlap`;
+even a zero setting requires nonzero pixel intersection. A bounding-box-center KD-tree
+conservatively screens possible overlaps, followed by actual pixel-coverage checks.
+No all-pairs rain-pixel distance matrix is built. Bounding-box intersection alone cannot
+admit a distant object. Scoring distance remains prediction error, isolating the candidate-policy change.
 
-低于tau的候选在分配前删除；有效候选按连通分量分配，每个parent提供不匹配选项。
-目标为有效边总得分最大，不强制每个对象匹配。
-split/merge仍在一对一分配之前判断；新增候选可能暴露之前漏掉的事件，需要查看图和边表。
+Subthreshold candidates are removed before assignment. Valid candidates are assigned by
+connected component, with an unmatched option for every parent. The objective maximizes
+total valid-edge score without requiring every object to match. Split/merge detection
+still precedes one-to-one assignment; additional candidates may reveal previously missed
+events, which require inspection of maps and edge tables.
 
-状态tracking_config新增algorithm_revision=3。旧版本checkpoint拒绝续跑，必须从序列起点重跑新版。
-旧诊断脚本若拿当前算法重放旧结果会停止，这是预期保护；旧诊断结论保留，不覆盖。
+`tracking_config` gained `algorithm_revision=3`. Earlier checkpoints are rejected;
+restart the sequence with the new revision. Replay mismatch when newer code is applied to
+old results is an intentional safeguard. Preserve the earlier diagnosis instead of overwriting it.
 
-## RCC复跑（不重跑原作者版）
+## RCC rerun without rerunning original STEP
 
-login node更新新版仓库：
+Update the development checkout on a login node:
 
 ```bash
 cd /project2/moyer/kjwtang/myproject/STEP_validation/STEP_UPGRADE
 git pull --ff-only
 ```
 
-compute node激活新版环境，在仓库目录运行：
+Activate the separate upgraded environment on a compute node and run from the repository:
 
 ```bash
 python -u scripts/recheck_tracking.py \
@@ -31,27 +37,28 @@ python -u scripts/recheck_tracking.py \
   --output-dir results/tracking_revision3_600
 ```
 
-此脚本只重新运行新版tracking；识别、小时降雨和两组原版tracking从旧目录只读复用。
-复用使用符号链接，请保留源结果目录。追踪从零状态开始。
-之后独立按6帧分块、经过JSON checkpoint重载，核对全部栅格及节点/边/事件/family表完全一致。
-输出新的三组并排图及edge_changes.json；保存输入hash、源码版本和参数。
-新旧branch ID可能整体变化，比较以(frame,local_label)标识对象，不直接按branch数字对齐。
+Only upgraded tracking is rerun. Identification, hourly rainfall, and both original-tracking
+groups are reused read-only through symlinks; retain their source directory. Tracking starts
+from empty state. A separate six-frame chunk replay reloads JSON checkpoints and requires
+exact agreement of all rasters and node/edge/event/family tables. New three-way comparison
+plots and `edge_changes.json` include input hashes, source version, and parameters.
+Compare immutable `(frame, local_label)` object identities, not branch numbers that may shift.
 
 ```bash
 cat results/tracking_revision3_600/edge_changes.json
 ```
 
-重点看focus_pairs：旧36→76对应的对象对是否存在新版边（continue或事件边）；
-旧12→26评分仍低于tau，本次不为接上它而修改评分阈值。
-其他added/removed/changed_event边也必须检查，不能只看目标连接恢复。
-若产生大量新增split/merge，需核查是否误把临近系统关联，而不是直接认为事件检测更好。
+Inspect `focus_pairs`: does the object pair formerly labeled 36 -> 76 now have a continue
+or event edge? The former 12 -> 26 pair remains below tau; this revision does not lower tau
+to connect it. Review all added, removed, and changed-event edges, not only restored focus links.
+Numerous new split/merge events require checking for false links between neighboring systems.
 
-## 已验证的回归场景
+## Verified regression scenarios
 
-- 运动反转/质心形变使预测失准，但当前位置附近对象仍可连。
-- 两种质心门限都未命中，实质像素重叠仍可形成候选。
-- 包围盒相交、mask不重叠且远离两质心时不产生候选。
-- 原2×2反例选择.90而非.80；所有分数不合格时返回空匹配。
-- split/merge、gap、跨chunk一致性和旧checkpoint拒绝。
+- Motion reversal or centroid deformation breaks prediction, but the current-position route remains available.
+- Both centroid routes miss, but substantive pixel overlap admits a candidate.
+- Bounding boxes intersect without mask overlap, far from both centroids: no candidate is admitted.
+- The 2x2 counterexample selects .90 rather than .80; all-ineligible scores return empty assignment.
+- Split/merge, gaps, cross-chunk equivalence, and rejection of old checkpoints.
 
-真实RCC上的效果和性能需通过上述复跑确认；合成测试通过不等于科学验证完成。
+Real RCC effects and performance require the rerun above. Synthetic passes do not complete scientific validation.

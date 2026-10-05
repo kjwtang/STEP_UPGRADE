@@ -1,21 +1,25 @@
-# RCC 高分辨率验证与性能测试
+# RCC high-resolution validation and performance testing
 
-使用新版独立环境，不安装进旧 STEP 环境。以下命令在仓库根目录运行。
-在 login node 安装依赖，在 compute node 跑计算：
+Historical validation runner guide. For the current frozen beta entry point and pinned installation,
+use [the group beta guide](GROUP_BETA_0_4_0b2.md). This older runner is not the reference resume interface.
+Use a separate upgraded environment, not the original STEP environment. Commands run from the
+repository root; install dependencies on a login node and compute on a compute node:
 
 ```bash
 python -m pip install -r requirements-validation.txt
 ```
 
-## RCC CIMP_1hr 原始 CSTM 多文件入口
+## RCC CIMP_1hr: original hourly CSTM directory
 
-已确认此数据每小时一个文件，RAINNC(south_north,west_east)为累计mm，
-全域1010×1634。使用以下专用入口，脚本只加载裁剪后的降雨和经纬度，不加载三维气象场。
-目录递归搜索 `cstm_d01_*.nc`，按文件名时间排序，并逐文件与内部 Times 核对。
-`--start 0 --hours 24` 使用最早25个快照，产生24个相邻小时降雨增量；
-第一个快照仅作差分基准，不会虚构第一小时降雨。每个chunk都带上其前一小时基准。
+The inspected data has one file per hour, cumulative `RAINNC(south_north,west_east)` in mm,
+and a 1010x1634 full domain. This dedicated reader loads cropped rainfall and coordinates,
+not 3D meteorological fields. It recursively finds `cstm_d01_*.nc`, sorts filename timestamps,
+and checks each against internal Times. `--start 0 --hours 24` reads the earliest 25 snapshots
+to produce 24 hourly increments; the first snapshot is only the difference baseline.
+Each chunk includes its preceding snapshot.
 
-先在login node的新版仓库和独立环境中 `git pull --ff-only`，然后在compute node运行：
+Historically, update the development checkout with `git pull --ff-only` on the login node,
+then run on the compute node. Do not update a pinned beta checkout during an active job.
 
 ```bash
 python scripts/validate_real_data.py \
@@ -30,94 +34,102 @@ python scripts/validate_real_data.py \
   --stream --output-dir results/benchmark_rainnc_600
 ```
 
-确认后将crop改为0、输出目录改为 `results/benchmark_rainnc_full` 即测全域原网格。
-小样本整段/分块一致性验证：去掉 `--stream`，使用 `--crop 300` 和新的输出目录。
+After inspection, use crop=0 and `results/benchmark_rainnc_full` for the full native grid.
+For small-sample whole/chunk equivalence, remove `--stream`, use `--crop 300`, and select a new output directory.
 
-缺小时、重复时间、文件名与Times不符、网格改变和累计量减少都会停止。
-默认负差值容差为0；确有浮点舍入证据时才显式配置 `--negative-tolerance-mm`，
-脚本记录被截断的微小负差像素数，不自动把重启/累计桶回退当成0雨。
-无法由相邻累计量可靠恢复的重启区间需要另外的原始数据或重启记录。
-`wrfout_ref` 年份与时间不同会输出警告，并在每块metadata中保留来源属性；
-即使Times与文件名一致，也仍需确认这不是源文件复制/年份标注错误。
-此入口仅验证RAINNC网格尺度降雨，不宣称包含未提供的RAINC对流降雨分量。
+Missing hours, duplicate times, filename/Times mismatch, grid changes, and cumulative decreases
+stop processing. Negative-difference tolerance defaults to zero. Set `--negative-tolerance-mm`
+only with evidence of floating-point rounding; clipped small-negative pixel counts are recorded.
+Restarts/cumulative-bucket rollback are not automatically converted to zero rain.
+Intervals not recoverable from adjacent accumulations require original data or restart records.
+A mismatched `wrfout_ref` year triggers a warning and retains provenance in chunk metadata;
+even matching Times/filenames do not prove the source was not copied or mislabeled.
+This validates RAINNC only, not an unavailable RAINC convective component.
 
-## 1. 先确认数据
+## 1. Inspect inputs first
 
 ```bash
-python scripts/validate_real_data.py /实际路径/降雨文件.nc --inspect
+python scripts/validate_real_data.py /PATH/TO/rainfall.nc --inspect
 ```
 
-输入支持一个 NetCDF 文件或 `(time,y,x)` NPY 文件。目录不是输入文件。
-从元数据确认变量名、维度、时间、单位。下方 `PRECIP`、`time y x` 是示例，
-必须替换为检查到的名称。原始累计 RAINNC/RAINC 不可直接使用，需先处理累计量差分和模式重启。
-已处理的逐小时 PRECIP(mm) 使用 `--rain-kind interval`，不重复差分。
-`--units mm` 仅在你确认单位但文件元数据缺失时使用。
-NPY 还必须提供 `--dt-hours 1 --units mm`，其时间连续性无法自动核验。
+The generic reader accepts a single NetCDF file or `(time,y,x)` NPY, not a directory;
+the dedicated WRF reader above handles directories. Verify variable, dimensions, time, and units.
+`PRECIP` and `time y x` below are placeholders to replace with inspected names.
+Raw cumulative RAINNC/RAINC requires differencing and restart handling before generic use.
+Already processed hourly PRECIP(mm) uses `--rain-kind interval`, without another difference pass.
+Use `--units mm` only when units are known but metadata is absent. NPY also requires
+`--dt-hours 1 --units mm`; chronological continuity cannot be automatically verified.
 
-## 2. 小样本正确性验证
+## 2. Small-sample consistency validation
 
 ```bash
-python -u scripts/validate_real_data.py /实际路径/降雨文件.nc \
+python -u scripts/validate_real_data.py /PATH/TO/rainfall.nc \
   --variable PRECIP --dims time y x --rain-kind interval \
   --start 0 --hours 72 --crop 300 --workers 4 \
   --chunk-frames 24 --sequence-id present_2005_validation \
   --output-dir results/check_300_72h --gif
 ```
 
-`--hours` 表示帧数，仅对逐小时数据等于小时数。默认 threshold=1 mm/h、radius=9 cells、
-最大位移=20 cells/frame 均为待校准起点。不同分辨率之间比较必须调整网格参数，
-保持相同物理尺度；这些命令扩大的是原分辨率下的空间范围，没有降采样。
+`--hours` counts frames and equals hours only for hourly data. Historical defaults
+threshold=1 mm/h, radius=9 cells, displacement=20 cells/frame are calibration starting points.
+Adjust grid parameters to maintain physical scales when resolution changes. These commands
+expand native-resolution coverage; they do not downsample.
 
-检查 `summary.json` 的所有 checks=true：整段和独立分块识别、标签、最终 family 映射、
-节点/边/事件一致；节点唯一；分支每帧唯一；边引用有效且时间前进。
-图中数字为 branch ID；split/merge 后换 branch 是设计行为。颜色超过256个分支会复用。
-`statistics.png` 给出对象数、面积、分支观测跨度和分支内部速度。
-跨度含 gap 且受时段/裁剪边缘和 split/merge 截断，不等于真实风暴寿命。
-`frame_*.png` 包括均匀抽样帧、首次各类型事件的前后帧及首次 gap 两端。
-GIF 可选，绘图可能慢且占内存。所有坐标是裁剪后网格坐标，不是经纬度。
+Require all `summary.json` checks=true: whole/chunk identification and labels, final family mappings,
+nodes/edges/events, unique nodes, per-frame unique branches, valid forward-time edge references.
+Plot numbers are branch IDs; split/merge creates new branches intentionally. Colors repeat after 256.
+`statistics.png` includes counts, area, observed branch spans, and within-branch speeds.
+Spans include gaps and are truncated by time/crop boundaries and split/merge; they are not true storm lifetimes.
+`frame_*.png` includes sampled frames, first event-type neighborhoods, and first gap endpoints.
+GIFs are optional and may be slow/memory-intensive. Coordinates are cropped grid cells, not latitude/longitude.
 
-## 3. 高分辨率流式性能测试
+## 3. High-resolution streaming benchmark
 
-先在 600×600 原始网格上跑24帧，每次只读6帧；再在独立进程中扩大到1000×1000，
-最后 `--crop 0` 测全域。每次输出目录必须不同，已有目录不会覆盖。
+Begin with 24 frames on a native 600x600 crop, reading six frames per chunk. Test 1000x1000
+in another process, then full domain with `--crop 0`. Use a distinct output directory each time;
+existing directories are not overwritten.
 
 ```bash
-/usr/bin/time -v python -u scripts/validate_real_data.py /实际路径/降雨文件.nc \
+/usr/bin/time -v python -u scripts/validate_real_data.py /PATH/TO/rainfall.nc \
   --variable PRECIP --dims time y x --rain-kind interval \
   --start 0 --hours 24 --crop 600 --workers 4 --chunk-frames 6 \
   --sequence-id present_2005_benchmark --stream \
   --output-dir results/bench_600
 ```
 
-流式模式按 chunk 读取、识别、追踪、保存并重新读取 checkpoint；不将全时段栅格放入内存。
-边界时间会检查，不允许静默跳过缺帧。追踪在同一序列内串行，只有识别并行。
-默认输出每块图表和 checkpoint；`--save-labels` 额外保存每块识别和追踪栅格。
-预览图只画第一个 chunk，性能测试通常不加 GIF。全域使用同样机制；先依据小域的内存和对象数决定资源。
-完整目录中 `SUCCESS` 文件表示脚本走完，失败目录可以留作诊断，不支持在同一目录自动重跑。
+Streaming reads, identifies, tracks, saves, and reloads checkpoints per chunk without retaining
+all rainfall rasters. Boundary times are checked; frames are not silently skipped. Tracking within
+a sequence is serial, while identification is parallel. Outputs include chunk tables/checkpoints;
+`--save-labels` additionally saves identification/tracking arrays. Previews cover the first chunk;
+benchmarks usually omit GIFs. Size resources using smaller-domain memory and object counts first.
+`SUCCESS` means the runner completed. Preserve failed outputs for diagnosis; this historical runner
+does not automatically restart in the same output directory.
 
-输出：
+Outputs:
 
-- `performance.csv`：每块读取、识别、追踪、保存、绘图耗时与对象数、内存峰值。
-- `performance.png`：各阶段总耗时和峰值内存趋势。
-- `summary.json`：每帧核心耗时、每秒处理百万网格数、对象/事件/gap 数量。
-- `frame_statistics.csv`、`statistics.png`：逐帧对象数、区域平均/最大降雨、湿区和缺测比例。
-- `chunk_*/`：节点、边、事件、family 表，时间/单位元数据和 checkpoint。
+- `performance.csv`: per-chunk read/ID/tracking/output/plot times, object counts, memory peaks.
+- `performance.png`: total stage timings and memory trends.
+- `summary.json`: core time per frame, million grid cells per second, object/event/gap counts.
+- `frame_statistics.csv`, `statistics.png`: object counts, mean/max rainfall, wet/missing fractions.
+- `chunk_*/`: node/edge/event/family tables, time/unit metadata, checkpoints.
 
-树状进程 RSS 每0.2秒采样，fork共享页面会重复计算，因此是近似观测，不是独占物理内存；
-parent_peak_rss_mb 不含识别子进程。结合 `/usr/bin/time -v` 与作业结束后的
-`sacct -j JOBID --format=JobID,Elapsed,TotalCPU,MaxRSS,State` 检查资源。
-主进程 CPU 时间也不含识别子进程。总体 wall time包含数据输出与首块绘图，
-但不包含依赖导入和最后生成性能汇总图的时间；整条命令的时间看 `/usr/bin/time -v`。
-核心性能单独使用 identification+tracking。若进程内存查询被系统限制，
-`memory_sampling_errors` 会记录原因；无法采样的值为 null，部分采样不能当作完整进程树峰值。
+Process-tree RSS is sampled every 0.2 seconds; fork-shared pages can be counted repeatedly,
+so it is approximate, not exclusive physical memory. `parent_peak_rss_mb` excludes ID workers.
+Cross-check `/usr/bin/time -v` and post-job
+`sacct -j JOBID --format=JobID,Elapsed,TotalCPU,MaxRSS,State`.
+Parent CPU time also excludes ID workers. Runner wall time includes output and first-chunk plots,
+but excludes dependency import and final performance-summary plots; outer time covers the full command.
+Core performance uses identification+tracking separately. Restricted memory queries populate
+`memory_sampling_errors`; unavailable values are null, and partial samples are not a complete tree peak.
 
-流式测试不自动验证整段等价性，也不是科学效果验收；小样本模式负责该检查。
-目前追踪的对象提取、像素重叠和全局匹配仍可能随对象数量迅速变慢。
-流式处理限制输入栅格占用，但不能保证任意高分辨率全域都能在32GB内运行。
-观察最密集降雨场景，不能仅按网格数线性外推整个JJA时间。
-跨月生产仍需外部清单/调度层；普通入口一次接受一个多时次文件，
-专用 `--wrf-cumulative` 入口才支持CSTM原始小时目录；不要在同一目录混用两个气候年份。
+Streaming does not automatically establish whole-run equivalence or scientific validity;
+small-sample mode checks consistency. Object extraction, pixel overlap, and global assignment
+can slow sharply with object count. Chunked input does not guarantee arbitrary domains fit 32 GB.
+Inspect dense-rainfall cases; do not extrapolate an entire JJA solely from grid-cell count.
+This historical runner needs external planning for cross-month production. The generic reader accepts
+one multi-time file; only the dedicated WRF option accepts original hourly CSTM directories.
+Do not mix climate years/members in one input directory. The beta reference runner provides its own continuous plan.
 
-逐步扩大范围时记录相同 commit、输入时间、阈值、半径、位移、workers 和 chunk 大小。
-必要时额外对 workers=1/4、chunk=3/6 比较，其他条件不变。
-代码只检查计算一致性；仍需人工核验相邻系统误连、断轨、分裂合并和gap的物理合理性。
+Record commit, interval, threshold, radius, displacement, workers, and chunk size when scaling up.
+Where needed, compare workers=1/4 and chunks=3/6 with everything else fixed.
+Consistency checks do not replace physical inspection of false links, breaks, split/merge, and gaps.

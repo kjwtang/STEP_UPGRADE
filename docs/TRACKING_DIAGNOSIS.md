@@ -1,12 +1,13 @@
-# 追踪断链诊断（保持算法不变）
+# Broken-link diagnosis without algorithm changes
 
-版本注意：旧结果只能用产生它的代码重放。升级到0.3后，请先按
-[revision 3指南](TRACKING_REVISION3.md)运行 `recheck_tracking.py`，不要直接用新版重放旧结果。
-下述默认branch编号针对原先的诊断样本；新版编号可能变化。
+Historical guide: replay old results only with the code that generated them.
+After upgrading to 0.3, first run `recheck_tracking.py` as described in
+[revision 3](TRACKING_REVISION3.md); do not replay old results with newer code directly.
+The branch IDs below refer to the original diagnostic sample and may differ in later runs.
 
-输入是已完成的 `original_vs_upgrade_600_mem24` 输出目录。
-复用保存的降雨、new_id标签、新版tracking标签、混合组tracking标签和参数，
-不读取原始2GB文件、不重新跑原作者tracking。
+Input is the completed `original_vs_upgrade_600_mem24` output directory.
+The script reuses saved rainfall, new identification labels, upgraded and hybrid tracking
+rasters, and parameters. It does not read the original 2 GB files or rerun original STEP tracking.
 
 ```bash
 python -u scripts/diagnose_tracking.py \
@@ -14,25 +15,28 @@ python -u scripts/diagnose_tracking.py \
   --output-dir results/diagnosis_600
 ```
 
-脚本重放新版全部24帧，并逐帧校验与保存的结果完全一致；不一致则停止，
-避免用不同代码/参数解释旧结果。默认对01时和05时的所有相邻对象对做诊断，
-特别提取图中的 branch 12→26（00→01时）和36→76（04→05时）。
-其他过渡可用 `--frames 1 2 3 4 5`，数字为从0开始的子帧序号。
+The script replays all 24 upgraded frames and requires exact frame-by-frame raster equality.
+It stops on mismatch so that different code/parameters cannot explain historical results.
+By default it audits every adjacent object pair at 01:00 and 05:00, highlighting branch
+12 -> 26 at 00:00 -> 01:00 and 36 -> 76 at 04:00 -> 05:00.
+Use `--frames 1 2 3 4 5` for other transitions; these are zero-based child-frame indices.
 
-输出 `diagnosis.json`、`REPORT.md` 和 `pair_decisions.csv`。
-记录原始质心位移、预测误差、门限、原始/平移IoU、覆盖比例、强度比、评分、
-是否进入候选、实际接受边以及关联端点上的其他边。
-门限外评分仅为“如果计算会得到什么”的反事实诊断，不代表该pair实际进入过分配。
-原因分类：
+Outputs are `diagnosis.json`, `REPORT.md`, and `pair_decisions.csv`. Records include raw
+centroid displacement, prediction error, gates, raw/advected IoU, coverage, intensity ratio,
+score, candidate admission, accepted edges, and other edges at the endpoints.
+Scores outside candidate gates are counterfactual: they do not imply the pair entered assignment.
 
-- `outside_all_candidate_gates`：所有候选入口均未通过（旧版本记为 `outside_prediction_gate`）。
-- `below_score_threshold`：进入候选但评分低于tau。
-- `endpoint_used_by_other_edge`：合格但端点分配给其他边，需看对应边，不直接称为bug。
-- `eligible_but_not_assigned`：合格未被分配，需核查端点竞争和分配结果。
-- `accepted_*`：实际边，包括continue/split/merge等，branch换号不一定断链。
+Decision categories:
 
-原版同ID关系只用于对照，不是真值；原版多个对象共享ID时会形成多对多关系。
-脚本另含一个2×2合成反例：tau=.35，分数矩阵[[.90,.34],[.80,0]]，
-旧算法先匹配再过滤，选中.80而非可行的.90；revision 3先过滤，预期选中.90。
-该反例证明旧分配存在问题，不能据此断言它就是实际样本两次断链的原因。
-诊断脚本本身不修改阈值、运动门限或生产追踪代码。
+- `outside_all_candidate_gates`: no candidate entry route passed; formerly `outside_prediction_gate`.
+- `below_score_threshold`: admitted but below tau.
+- `endpoint_used_by_other_edge`: eligible, but an endpoint was assigned elsewhere; inspect that edge before calling this a bug.
+- `eligible_but_not_assigned`: eligible but unassigned; inspect competition and assignment results.
+- `accepted_*`: an actual edge, including continue/split/merge. A branch-ID change need not be a broken link.
+
+Original same-ID relations are comparison evidence, not ground truth; shared IDs can imply many-to-many relations.
+The script also includes a 2x2 synthetic counterexample with tau=.35 and scores [[.90,.34],[.80,0]].
+Assignment before threshold filtering chooses .80 instead of feasible .90; revision 3 filters first
+and is expected to choose .90. This proves a historical assignment issue, not its causal role
+in the two real-data breaks. The diagnostic script does not change thresholds, movement gates,
+or production tracking code.

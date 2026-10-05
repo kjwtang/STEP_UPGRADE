@@ -1,14 +1,17 @@
 # STEP_UPGRADE
 
-## Group research beta: v0.4.0b1
+## Group research beta: v0.4.0b2
 
-For internal group trials, use the fixed `v0.4.0b1` tag, an isolated Python 3.13
+For internal group trials, use the fixed `v0.4.0b2` tag, an isolated Python 3.13
 environment and `requirements-beta.txt`. Start with the frozen 4-km/hourly
 1-mm/h rainfall reference, not bare-API defaults or expanded-mask experiments.
 This is precipitation-object tracking, not validated cloud identification or a
 hosted cloud service. No scientific defaults were changed for this beta.
 
-**[中文版：安装、自检、真实数据命令与功能介绍](docs/GROUP_BETA_0_4_0b1_ZH.md)**
+**[Group beta guide: installation, smoke check, real-data commands, and capabilities](docs/GROUP_BETA_0_4_0b2.md)**
+
+Current repository documentation, code comments, and user-facing messages are in English.
+Historical commits are retained; use this tag for the English-only beta snapshot.
 
 ```bash
 python -m pip install --only-binary=:all: -r requirements-beta.txt
