@@ -1,4 +1,5 @@
-# Compatible with the original STEP stack and suitable for Python 3.7+.
+# Historical loose dependency ranges, not the group-beta environment lock.
+# Current group beta requires Python >=3.12; use requirements-beta.txt instead.
 setuptools>=40.8
 numpy>=1.18,<3.0
 scipy>=1.4,<2.0

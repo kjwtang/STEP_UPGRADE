@@ -2,6 +2,10 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+.venv-step-beta/
+*.egg-info/
+/build/
+/dist/
 
 # Local scientific inputs and generated validation products.
 /data/

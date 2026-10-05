@@ -1,5 +1,19 @@
 # Change log
 
+## v0.4.0b1 — group research beta (2026-10-05)
+
+- Fixed Git tag and package version for internal trials; not a public production
+  release or scientific cloud/convection validation. Scientific core, reference
+  preset and catalog admission conditions remain unchanged.
+- Add Chinese installation/feature/input/output guide, pinned top-level beta
+  dependencies, Python >=3.12 installation floor, and modern editable build backend.
+- Add a synthetic cumulative-rain month-boundary smoke test with controlled pause,
+  changed workers/chunks, exact full replay and a completion marker.
+- Recommend the explicit frozen 1-mm/h reference stream runner. Keep 0.5/0.1
+  extent measurement separate from experimental expanded-feature tracking.
+- Upstream licensing/citation work is deferred for this internal handoff at the
+  user's request, not asserted resolved; revisit before public distribution.
+
 Commit hashes identify reproducible experiments; package version 0.3.0 alone
 does not distinguish experimental revisions. Record `git rev-parse HEAD` with
 each validation run. Do not update a checkout while its run is active.

@@ -1,5 +1,25 @@
 # STEP_UPGRADE
 
+## Group research beta: v0.4.0b1
+
+For internal group trials, use the fixed `v0.4.0b1` tag, an isolated Python 3.13
+environment and `requirements-beta.txt`. Start with the frozen 4-km/hourly
+1-mm/h rainfall reference, not bare-API defaults or expanded-mask experiments.
+This is precipitation-object tracking, not validated cloud identification or a
+hosted cloud service. No scientific defaults were changed for this beta.
+
+**[中文版：安装、自检、真实数据命令与功能介绍](docs/GROUP_BETA_0_4_0b1_ZH.md)**
+
+```bash
+python -m pip install --only-binary=:all: -r requirements-beta.txt
+python -m pip install --no-build-isolation -e .
+python -u scripts/beta_smoke.py --output-dir results/beta_smoke_01 --workers 2
+```
+
+Run these commands from the tagged source checkout inside a new virtual
+environment. Group beta has Python >=3.12 as its installation floor; the
+reference environment is 3.13.5. Do not co-install original STEP in this environment.
+
 See [CHANGELOG.md](CHANGELOG.md) for reproducible experiment commits and the
 public-release checklist. Experimental branches are not validated releases.
 
@@ -8,7 +28,7 @@ compares lower-threshold tracking with fixed-core rain envelopes; it does not
 replace the frozen operational reference.
 
 STEP_UPGRADE identifies two-dimensional precipitation objects and builds a
-time-continuous lineage graph. Version 0.3 distinguishes three identifiers:
+time-continuous lineage graph. The beta distinguishes three identifiers:
 
 - a `node_id` identifies one observed object at one time;
 - a `branch_id` follows an uninterrupted one-to-one track;
@@ -188,9 +208,10 @@ partitions.
 ## Installation and tests
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements-hpc.txt
+# Python >=3.12; group beta reference environment is 3.13.5.
+python3 -m venv .venv-step-beta
+source .venv-step-beta/bin/activate
+python -m pip install --only-binary=:all: -r requirements-beta.txt
 python -m pip install --no-build-isolation -e .
 python -m pytest -q
 ```

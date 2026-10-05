@@ -1,0 +1,14 @@
+# Group beta v0.4.0b1. Reference installation: Python 3.13.5, Linux/macOS APIs.
+# Top-level pins, not a complete transitive lock. Record pip freeze per deployment.
+setuptools==84.0.0
+wheel==0.45.1
+numpy==2.5.3
+scipy==1.18.1
+scikit-image==0.26.0
+matplotlib==3.11.2
+xarray==2026.7.0
+netCDF4==1.7.4
+pandas==3.0.6
+psutil==7.2.2
+pillow==12.3.0
+pytest==9.1.1
