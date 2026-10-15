@@ -264,3 +264,20 @@ def test_block_certification_keeps_decisions(levels):
     ref, _, _ = c.track(labels, rain, grid_km=4, tau=0.3, exact_similarity=True)
     got, _, _ = c.track(labels, rain, grid_km=4, tau=0.3, block_levels=levels)
     assert np.array_equal(ref, got)
+
+
+def test_compare_tracking_definitions_smoke(tmp_path):
+    import json
+    import subprocess
+    import sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[1]
+    rain = _random_storms(2, T=6, shape=(120, 150)).astype(np.float32)
+    np.savez_compressed(tmp_path / "rain.npz", rain_mm_h=rain)
+    out = tmp_path / "cmp"
+    subprocess.run([sys.executable, str(root / "scripts/compare_tracking_definitions.py"),
+                    str(tmp_path / "rain.npz"), "--output-dir", str(out)],
+                   check=True, capture_output=True, text=True)
+    r = json.loads((out / "results.json").read_text())
+    assert set(r["runs"]) == {"A", "B", "C1", "C2", "D", "D2"}
+    assert r["runs"]["B"]["intensity_mm_h"] == pytest.approx(r["runs"]["C1"]["intensity_mm_h"])
