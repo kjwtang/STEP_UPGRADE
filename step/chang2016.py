@@ -240,6 +240,8 @@ class Segment:
     bbox: Tuple[int, int, int, int]  # ymin, ymax, xmin, xmax (inclusive)
     event_id: int = 0
     previous_centroid: Optional[Tuple[float, float]] = None
+    spread: float = 0.0  # rain-weighted mean distance to centroid, cells
+    _blocks: Optional[tuple] = field(default=None, repr=False, compare=False)
 
 
 def segments_from_labels(labels: np.ndarray, rain: np.ndarray) -> List[Segment]:
@@ -258,8 +260,10 @@ def segments_from_labels(labels: np.ndarray, rain: np.ndarray) -> List[Segment]:
         else:  # cannot occur for thresholded positive rain; kept for safety
             weights = np.full(len(values), 1.0 / len(values))
         centroid = (float(np.dot(ys, weights)), float(np.dot(xs, weights)))
+        spread = float(np.dot(weights, np.hypot(ys - centroid[0], xs - centroid[1])))
         out.append(Segment(label, ys, xs, weights, centroid, len(ys), total,
-                           (int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max()))))
+                           (int(ys.min()), int(ys.max()), int(xs.min()), int(xs.max())),
+                           spread=spread))
     return out
 
 
@@ -359,6 +363,51 @@ def similarities_to_parent(parent: Segment, children: Sequence[Segment],
             for ch in children]
 
 
+def _block_summary(seg: Segment, k: int):
+    """Per k x k block: weight, weighted centroid, spread, occupied extent."""
+    cache = seg._blocks if seg._blocks is not None else {}
+    if k in cache:
+        return cache[k]
+    by, bx = seg.ys // k, seg.xs // k
+    key = by * (int(bx.max()) + 1) + bx
+    _, inv = np.unique(key, return_inverse=True)
+    n = int(inv.max()) + 1
+    w = np.bincount(inv, seg.weights, n)
+    cy = np.bincount(inv, seg.weights * seg.ys, n) / w
+    cx = np.bincount(inv, seg.weights * seg.xs, n) / w
+    r = np.bincount(inv, seg.weights * np.hypot(seg.ys - cy[inv], seg.xs - cx[inv]), n) / w
+    ext = np.empty((n, 4))
+    ext[:, 0] = np.full(n, np.inf); ext[:, 2] = np.full(n, np.inf)
+    ext[:, 1] = -np.inf; ext[:, 3] = -np.inf
+    np.minimum.at(ext[:, 0], inv, seg.ys); np.maximum.at(ext[:, 1], inv, seg.ys)
+    np.minimum.at(ext[:, 2], inv, seg.xs); np.maximum.at(ext[:, 3], inv, seg.xs)
+    summary = (w, cy, cx, r, ext)
+    cache[k] = summary
+    seg._blocks = cache
+    return summary
+
+
+def similarity_bounds(a: Segment, b: Segment, phi_per_cell: float, k: int = 8,
+                      chunk: int = 4096) -> Tuple[float, float]:
+    """Certified [lower, upper] bounds on the S1.2 similarity from k x k blocks.
+
+    Lower: Jensen within each block pair plus the triangle inequality.
+    Upper: the minimum distance between occupied block extents.
+    """
+    wa, ya, xa, ra, ea = _block_summary(a, k)
+    wb, yb, xb, rb, eb = _block_summary(b, k)
+    lower = upper = 0.0
+    for lo in range(0, len(wa), chunk):
+        sl = slice(lo, lo + chunk)
+        dc = np.hypot(ya[sl, None] - yb[None, :], xa[sl, None] - xb[None, :])
+        ww = wa[sl, None] * wb[None, :]
+        lower += float(np.sum(ww * np.exp(-phi_per_cell * (dc + ra[sl, None] + rb[None, :]))))
+        dy = np.maximum(0, np.maximum(ea[sl, None, 0] - eb[None, :, 1], eb[None, :, 0] - ea[sl, None, 1]))
+        dx = np.maximum(0, np.maximum(ea[sl, None, 2] - eb[None, :, 3], eb[None, :, 2] - ea[sl, None, 3]))
+        upper += float(np.sum(ww * np.exp(-phi_per_cell * np.hypot(dy, dx))))
+    return lower, upper
+
+
 def _bbox_gap_cells(a: Segment, b: Segment) -> float:
     dy = max(0, a.bbox[0] - b.bbox[1], b.bbox[0] - a.bbox[1])
     dx = max(0, a.bbox[2] - b.bbox[3], b.bbox[2] - a.bbox[3])
@@ -417,6 +466,11 @@ class Chang2016Tracker:
     pairs_pruned: int = 0
     direct_limit: int = 250_000
     fft_workers: int = 1
+    exact_similarity: bool = False
+    block_levels: Tuple[int, ...] = (32, 8)
+    pairs_certified: int = 0
+    pairs_block_certified: int = 0
+    pairs_block_rejected: int = 0
 
     def __post_init__(self):
         if self.grid_km <= 0 or self.phi_per_km <= 0:
@@ -439,61 +493,117 @@ class Chang2016Tracker:
             return 0.0
         return math.log(1.0 / self.tau) / self.phi_per_cell
 
+    def _motion(self, seg: Segment, parent: Segment):
+        """S1.2 motion rule; returns (rule, displacement_km, angle) or None."""
+        e = np.subtract(seg.centroid, parent.centroid) * self.grid_km
+        disp = float(np.hypot(e[0], e[1]))
+        if disp < self.max_displacement_km:
+            return "distance", disp, None
+        if parent.previous_centroid is None:
+            return ("angle", disp, None) if self.no_history == "accept" else None
+        e_star = np.subtract(parent.centroid, parent.previous_centroid) * self.grid_km
+        angle = _angle_deg(e, e_star)
+        if angle is None or not angle < self.max_angle_deg:
+            return None
+        return "angle", disp, angle
+
+    def _exact(self, current: List[Segment], pairs) -> Dict[Tuple[int, int], float]:
+        """Exact similarities; small pairs direct, others on a shared hub field."""
+        sims: Dict[Tuple[int, int], float] = {}
+        hubs: Dict[Tuple[str, int], List[Tuple[int, int]]] = {}
+        for ci, pi in pairs:
+            seg, parent = current[ci], self.previous[pi]
+            self.pairs_evaluated += 1
+            if seg.area * parent.area <= self.direct_limit:
+                sims[(ci, pi)] = _direct_similarity(seg, parent, self.phi_per_cell)
+            elif parent.area >= seg.area:
+                hubs.setdefault(("p", pi), []).append((ci, pi))
+            else:
+                hubs.setdefault(("c", ci), []).append((ci, pi))
+        for (side, index), group in hubs.items():
+            hub = self.previous[index] if side == "p" else current[index]
+            partners = [current[ci] if side == "p" else self.previous[pi] for ci, pi in group]
+            sims.update(zip(group, similarities_to_parent(
+                hub, partners, self.phi_per_cell, direct_limit=0, workers=self.fft_workers)))
+        return sims
+
     def update(self, time: int, labels: np.ndarray, rain: np.ndarray):
         time = int(time)
         if self.last_time is not None and time != self.last_time + 1:
             raise ValueError("time steps must be consecutive")
         current = segments_from_labels(labels, rain)
         cutoff = self._prune_gap_cells()
-        # Exact pruning; small pairs are summed directly. sim is symmetric,
-        # so each remaining pair is evaluated on the FFT field of its larger
-        # member ("hub"), and a hub's field is shared by all its partners.
-        sims: Dict[Tuple[int, int], float] = {}
-        hubs: Dict[Tuple[str, int], List[Tuple[int, int]]] = {}
-        for ci, seg in enumerate(current):
-            for pi, parent in enumerate(self.previous):
-                if _bbox_gap_cells(seg, parent) >= cutoff:
-                    self.pairs_pruned += 1
-                    continue
-                self.pairs_evaluated += 1
-                if seg.area * parent.area <= self.direct_limit:
-                    sims[(ci, pi)] = _direct_similarity(seg, parent, self.phi_per_cell)
-                elif parent.area >= seg.area:
-                    hubs.setdefault(("p", pi), []).append((ci, pi))
+        phi = self.phi_per_cell
+        # Certified decisions (exact, not approximate). For any pair:
+        #   sim <= exp(-phi * bbox_gap)                       (upper bound)
+        #   sim >= exp(-phi * (|dc| + spread_i + spread_j))   (lower bound;
+        #          Jensen, exp(-phi d) is convex, plus the triangle inequality)
+        # so sim > tau is decided without the kernel sum unless
+        # bbox_gap < cutoff <= |dc| + spread_i + spread_j, cutoff = ln(1/tau)/phi.
+        nc, npv = len(current), len(self.previous)
+        qualified: Dict[int, List[Tuple[int, str, float, Optional[float], Optional[float]]]] = {}
+        uncertain: List[Tuple[int, int]] = []
+        motion: Dict[Tuple[int, int], Tuple[str, float, Optional[float]]] = {}
+        if nc and npv:
+            cb = np.array([s_.bbox for s_ in current], dtype=float)
+            pb = np.array([s_.bbox for s_ in self.previous], dtype=float)
+            cc = np.array([s_.centroid for s_ in current])
+            pc = np.array([s_.centroid for s_ in self.previous])
+            cs = np.array([s_.spread for s_ in current])
+            ps = np.array([s_.spread for s_ in self.previous])
+            for lo in range(0, nc, 512):
+                hi = min(nc, lo + 512)
+                dy = np.maximum(0, np.maximum(cb[lo:hi, None, 0] - pb[None, :, 1],
+                                              pb[None, :, 0] - cb[lo:hi, None, 1]))
+                dx = np.maximum(0, np.maximum(cb[lo:hi, None, 2] - pb[None, :, 3],
+                                              pb[None, :, 2] - cb[lo:hi, None, 3]))
+                gap = np.hypot(dy, dx)
+                dc = np.hypot(cc[lo:hi, None, 0] - pc[None, :, 0],
+                              cc[lo:hi, None, 1] - pc[None, :, 1])
+                bound = dc + cs[lo:hi, None] + ps[None, :]
+                keep = gap < cutoff
+                self.pairs_pruned += int((~keep).sum())
+                for i, j in zip(*np.nonzero(keep)):
+                    ci, pi = lo + int(i), int(j)
+                    rule = self._motion(current[ci], self.previous[pi])
+                    if rule is None:
+                        continue
+                    motion[(ci, pi)] = rule
+                    if bound[i, j] < cutoff:
+                        self.pairs_certified += 1
+                        qualified.setdefault(ci, []).append((pi, *rule, None))
+                    else:
+                        uncertain.append((ci, pi))
+        for k in self.block_levels:  # coarse to fine certified bounds
+            still = []
+            for ci, pi in uncertain:
+                lower, upper = similarity_bounds(current[ci], self.previous[pi], phi, k)
+                if upper <= self.tau:
+                    self.pairs_block_rejected += 1
+                elif lower > self.tau:
+                    self.pairs_block_certified += 1
+                    qualified.setdefault(ci, []).append((pi, *motion[(ci, pi)], None))
                 else:
-                    hubs.setdefault(("c", ci), []).append((ci, pi))
-        for (side, index), pairs in hubs.items():
-            hub = self.previous[index] if side == "p" else current[index]
-            partners = [current[ci] if side == "p" else self.previous[pi]
-                        for ci, pi in pairs]
-            values = similarities_to_parent(hub, partners, self.phi_per_cell,
-                                            direct_limit=0, workers=self.fft_workers)
-            sims.update(zip(pairs, values))
+                    still.append((ci, pi))
+            uncertain = still
+        sims = self._exact(current, uncertain)
+        for (ci, pi), value in sims.items():
+            if value > self.tau:
+                qualified.setdefault(ci, []).append((pi, *motion[(ci, pi)], value))
+        if self.selection == "most_similar" or self.exact_similarity:
+            need = [(ci, pi) for ci, items in qualified.items()
+                    for pi, _, _, _, v in items if v is None]
+            exact = self._exact(current, need)
+            qualified = {ci: [(pi, r, d, a, exact.get((ci, pi), v)) for pi, r, d, a, v in items]
+                         for ci, items in qualified.items()}
         links: List[Link] = []
         for ci, seg in enumerate(current):
-            best = None  # (key, parent, rule, similarity, displacement, angle)
-            for index, parent in enumerate(self.previous):
-                sim = sims.get((ci, index))
-                if sim is None or not sim > self.tau:
-                    continue
-                e = (np.subtract(seg.centroid, parent.centroid)) * self.grid_km
-                disp = float(np.linalg.norm(e))
-                angle = None
-                if disp < self.max_displacement_km:
-                    rule = "distance"
-                else:
-                    if parent.previous_centroid is None:
-                        if self.no_history == "reject":
-                            continue
-                        rule = "angle"
-                    else:
-                        e_star = np.subtract(parent.centroid, parent.previous_centroid) * self.grid_km
-                        angle = _angle_deg(e, e_star)
-                        if angle is None or not angle < self.max_angle_deg:
-                            continue
-                        rule = "angle"
-                key = ((parent.area, sim, -index) if self.selection == "largest"
-                       else (sim, parent.area, -index))
+            best = None
+            for pi, rule, disp, angle, sim in qualified.get(ci, ()):
+                parent = self.previous[pi]
+                simv = -1.0 if sim is None else sim
+                key = ((parent.area, simv, -pi) if self.selection == "largest"
+                       else (simv, parent.area, -pi))
                 if best is None or key > best[0]:
                     best = (key, parent, rule, sim, disp, angle)
             if best is None:
@@ -505,7 +615,7 @@ class Chang2016Tracker:
                 seg.event_id = parent.event_id
                 seg.previous_centroid = parent.centroid
                 links.append(Link(time, seg.label, seg.event_id, parent.label,
-                                  sim, disp, angle, rule))
+                                  float("nan") if sim is None else sim, disp, angle, rule))
         raster = np.zeros(np.shape(labels), dtype=np.int64)
         for seg in current:
             raster[seg.ys, seg.xs] = seg.event_id

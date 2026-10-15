@@ -209,3 +209,58 @@ def test_selection_largest_versus_most_similar():
     assert ev[1, 30, 88] == ev[0, 30, 40]             # largest qualifying
     ev, _, _ = c.track(labels, stack, grid_km=2, tau=1e-4, selection="most_similar")
     assert ev[1, 30, 88] == ev[0, 30, 95]
+
+
+def _random_storms(seed, T=4, shape=(160, 200)):
+    rng = np.random.default_rng(seed)
+    base = ndimage.gaussian_filter(rng.standard_normal((shape[0] + 40, shape[1] + 40)), 5)
+    return np.stack([np.clip((base[3 * t:3 * t + shape[0], 2 * t:2 * t + shape[1]] - 0.05)
+                             * 300, 0, None) for t in range(T)])
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+@pytest.mark.parametrize("tau", [0.05, 0.3, 0.7])
+def test_certified_decisions_equal_exact_decisions(seed, tau):
+    rain = _random_storms(seed)
+    labels = c.identify(rain, radius_km=20, grid_km=4)
+    fast, rows_fast, tf = c.track(labels, rain, grid_km=4, tau=tau)
+    slow, rows_slow, ts = c.track(labels, rain, grid_km=4, tau=tau, exact_similarity=True)
+    assert np.array_equal(fast, slow)
+    assert [r["rule"] for r in rows_fast] == [r["rule"] for r in rows_slow]
+
+
+def test_jensen_lower_bound_holds():
+    rain = _random_storms(7, T=2)
+    labels = c.identify(rain, radius_km=12, grid_km=4)
+    a = c.segments_from_labels(labels[0], rain[0])
+    b = c.segments_from_labels(labels[1], rain[1])
+    phi = 4 / 120
+    for s in a[:8]:
+        for t in b[:8]:
+            exact = c.similarity_bruteforce(s, t, phi)
+            dc = math.hypot(s.centroid[0] - t.centroid[0], s.centroid[1] - t.centroid[1])
+            assert exact >= math.exp(-phi * (dc + s.spread + t.spread)) - 1e-12
+            assert exact <= math.exp(-phi * c._bbox_gap_cells(s, t)) + 1e-12
+
+
+@pytest.mark.parametrize("k", [1, 4, 8])
+def test_block_bounds_bracket_exact(k):
+    rain = _random_storms(11, T=2)
+    labels = c.identify(rain, radius_km=12, grid_km=4)
+    a = c.segments_from_labels(labels[0], rain[0])
+    b = c.segments_from_labels(labels[1], rain[1])
+    phi = 4 / 120
+    for s in a[:6]:
+        for t in b[:6]:
+            exact = c.similarity_bruteforce(s, t, phi)
+            lo, hi = c.similarity_bounds(s, t, phi, k)
+            assert lo - 1e-12 <= exact <= hi + 1e-12
+
+
+@pytest.mark.parametrize("levels", [(), (4,), (32, 8)])
+def test_block_certification_keeps_decisions(levels):
+    rain = _random_storms(3)
+    labels = c.identify(rain, radius_km=20, grid_km=4)
+    ref, _, _ = c.track(labels, rain, grid_km=4, tau=0.3, exact_similarity=True)
+    got, _, _ = c.track(labels, rain, grid_km=4, tau=0.3, block_levels=levels)
+    assert np.array_equal(ref, got)
