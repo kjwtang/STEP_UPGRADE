@@ -12,7 +12,8 @@ Everything described here is opt-in. The `v0.4.0b3` modules
 unchanged. With default arguments, every new class or function reproduces the
 existing behaviour exactly; tests check this.
 
-Related: `docs/CHANG2016_REFERENCE.md` (the paper algorithm and its units).
+Related: `docs/STEP_UPGRADE_METHODS.md` (the full algorithm with equations) and
+`docs/CHANG2016_REFERENCE.md` (the paper algorithm and its units).
 
 ## 1. Why these changes
 
